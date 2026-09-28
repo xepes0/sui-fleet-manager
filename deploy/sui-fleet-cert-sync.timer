@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily S-UI Fleet Manager TLS certificate refresh
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+Unit=sui-fleet-cert-sync.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,17 @@
+services:
+  fleet-manager:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:18780:18780"
+    volumes:
+      - fleet-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  fleet-data:

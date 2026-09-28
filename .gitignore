@@ -1,0 +1,10 @@
+/data/
+/fleet-manager
+/fleet-manager.exe
+/sui-fleet-manager
+/sui-fleet-manager.exe
+/.gocache/
+/.env
+
+# Local production deployment
+/deploy/install-hk.sh

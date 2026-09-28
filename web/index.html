@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>S-UI Fleet Manager</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/redesign.css">
+  <link rel="stylesheet" href="/monitor.css">
+  <link rel="stylesheet" href="/config-editor.css">
+  <link rel="stylesheet" href="/full-config.css">
+  <link rel="stylesheet" href="/batch-config.css">
+  <link rel="stylesheet" href="/templates.css">
+  <script src="/app.js" defer></script>
+  <script src="/monitor.js" defer></script>
+  <script src="/detail.js" defer></script>
+  <script src="/single-editor.js" defer></script>
+  <script src="/full-config.js" defer></script>
+  <script src="/batch-config.js" defer></script>
+  <script src="/templates.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div><div class="eyebrow">KOMARI × S-UI</div><h1>服务器控制台</h1></div>
+    <div class="top-actions"><span id="clock"></span><button id="refresh" class="secondary">刷新状态</button><button id="add" class="primary">＋ 添加面板</button></div>
+  </header>
+  <main>
+    <section id="notice" class="notice hidden"></section>
+    <section class="summary" id="summary"></section>
+    <nav class="tabs" aria-label="页面"><button class="active" data-tab="dashboard">探针总览</button><button data-tab="batch">批量操作</button><button data-tab="templates">模板库</button><button data-tab="subscriptions">订阅管理</button><button data-tab="backups">备份</button><button data-tab="audit">操作记录</button></nav>
+    <section id="dashboard" class="tab-panel">
+      <div class="section-head"><div><h2>Komari 探针总览</h2><p>所有探针的实时状态；已关联 S-UI 的服务器可直接管理配置</p></div><span id="updated"></span></div>
+      <div class="monitor-filter"><input id="monitor-search" type="search" placeholder="搜索服务器名称或地区" aria-label="搜索探针"><span id="monitor-count"></span></div>
+      <div id="server-list" class="server-list"></div>
+    </section>
+    <section id="batch" class="tab-panel hidden">
+      <div class="section-head"><div><h2>批量操作</h2><p>先预览每台服务器的变更，再逐台执行。配置写入前会自动备份 S-UI 数据库。</p></div></div>
+      <div id="batch-config" class="batch-config">
+        <div class="batch-config-head card"><div><h3>选择配置类别</h3><p class="hint">选好服务器后，直接修改入站、出站、用户、端点、服务、TLS、核心配置或面板设置。</p></div><nav id="batch-config-tabs" class="batch-config-tabs" aria-label="批量配置类别"></nav></div>
+        <div class="batch-config-layout"><aside class="card"><h3>1. 目标服务器</h3><div id="batch-config-servers"></div><p class="hint">每台服务器分别校验和备份。</p></aside><section class="card batch-config-work"><div class="batch-config-work-head"><h3>2. 选择对象与字段</h3><button id="batch-config-reload" class="secondary">重新读取</button></div><div id="batch-config-content"></div></section></div>
+        <div id="batch-config-preview" class="card hidden"></div><div id="batch-config-result" class="card hidden"></div>
+      </div>
+      <details id="legacy-batch" class="legacy-batch"><summary>维护操作与旧版快捷表单</summary><p class="hint">备份数据库、重启 sing-box 及旧版快捷操作仍可在这里使用。</p>
+      <div class="batch-grid">
+        <div class="card"><h3>1. 选择服务器</h3><p id="single-server-label" class="hidden"></p><div id="server-picker"></div></div>
+        <div class="card"><h3>2. 选择操作</h3>
+          <label>操作类型<select id="action"><optgroup label="维护"><option value="backup">备份数据库</option><option value="restartSb">重启 sing-box</option></optgroup><optgroup label="用户"><option value="client_enable">启用已有用户</option><option value="client_disable">停用已有用户</option><option value="client_create">创建用户</option></optgroup><optgroup label="入站与出站"><option value="inbound_create">新增入站</option><option value="inbound_patch">修改已有入站</option><option value="outbound_create">新增出站</option><option value="outbound_patch">修改已有出站</option></optgroup><optgroup label="路由规则"><option value="route_rule_add">插入路由规则</option><option value="route_rule_replace">替换路由规则</option><option value="route_rule_delete">删除路由规则</option></optgroup></select></label>
+          <div id="client-name-wrap" class="hidden"><label>选择已有用户<select id="client-name"></select></label></div>
+          <p id="form-source" class="hint">选择服务器后，现有入站、出站和路由规则会出现在下拉菜单中。</p>
+          <div id="client-create-wrap" class="hidden form-section">
+            <div class="form-two"><label>用户名称<input id="new-client-name" placeholder="例如 alice"></label><label>显示名称<input id="new-client-remark" placeholder="例如 Alice"></label></div>
+            <div class="form-two"><label>流量上限（GB，0 为不限）<input id="new-client-volume" type="number" min="0" step="any" value="0"></label><label>到期日期（留空为不限）<input id="new-client-expiry" type="date"></label></div>
+            <div class="form-two"><label>自定义密码（留空自动生成）<input id="new-client-password" type="password" autocomplete="new-password"></label><label>自定义 UUID（留空自动生成）<input id="new-client-uuid" autocomplete="off" placeholder="适用于 VLESS / VMess / TUIC"></label></div>
+            <label class="check-line"><input id="new-client-enable" type="checkbox" checked> 创建后启用</label>
+            <p class="hint">按服务器选择允许使用的入站。Trojan、Hysteria2、AnyTLS、Shadowsocks 使用密码；VLESS、VMess 使用 UUID。未填写的凭据会自动生成，并在各面板保持一致。</p><div id="client-inbound-picker"></div>
+          </div>
+          <div id="inbound-patch-wrap" class="hidden form-section">
+            <label>选择已有入站<select id="inbound-tag"></select></label>
+            <div class="form-two"><label>监听地址<input id="edit-inbound-listen" placeholder="留空表示不修改"></label><label>监听端口<input id="edit-inbound-port" type="number" min="1" max="65535" placeholder="留空表示不修改"></label></div>
+            <label>公开地址（域名或 IP）<input id="edit-inbound-server" placeholder="留空表示不修改"></label>
+            <label>公开端口<input id="edit-inbound-public-port" type="number" min="1" max="65535" placeholder="留空表示不修改"></label>
+            <p class="hint">仅填写需要修改的字段。公开地址和端口会更新订阅信息；复杂传输参数可先在 S-UI 配好，再用下方的复制功能批量创建。</p>
+          </div>
+          <div id="object-create-wrap" class="hidden form-section">
+            <label>创建方式<select id="object-mode"><option value="new">按类型新建</option><option value="copy">复制各面板已有配置</option></select></label>
+            <div id="object-copy-wrap" class="hidden"><label>复制哪个现有对象（按 Tag 在各面板查找）<select id="object-source"></select></label><p class="hint">复制会保留各面板原对象的协议、TLS 和传输设置，并生成新的 Tag。入站不会复制已绑定的用户；请填写新监听端口并核对公开地址。</p></div>
+            <div id="object-new-wrap"><label>类型<select id="object-type"></select></label></div>
+            <label>新名称 / Tag<input id="object-new-tag" placeholder="例如 proxy-hk"></label>
+            <div id="inbound-fields" class="hidden">
+              <div class="form-two"><label>监听地址<input id="new-inbound-listen" value="::"></label><label>监听端口<input id="new-inbound-port" type="number" min="1" max="65535" placeholder="例如 443"></label></div>
+              <div id="new-inbound-tls-wrap"><label>TLS 证书<select id="new-inbound-tls"><option value="0">不使用 TLS</option></select></label></div>
+              <div id="new-inbound-public-fields" class="form-two"><label>订阅公开地址<input id="new-inbound-server" placeholder="例如 hk.example.com"></label><label>公开端口<input id="new-inbound-public-port" type="number" min="1" max="65535" placeholder="默认同监听端口"></label></div>
+              <p class="hint">复杂的 Reality、传输层等配置建议选择“复制各面板已有配置”。</p>
+            </div>
+            <div id="outbound-fields" class="hidden"><div class="form-two"><label>远端服务器<input id="new-outbound-server" placeholder="域名或 IP"></label><label>远端端口<input id="new-outbound-port" type="number" min="1" max="65535"></label></div>
+              <div id="outbound-auth-fields"><div class="form-two"><label>用户名 / UUID<input id="new-outbound-user"></label><label>密码<input id="new-outbound-password" type="password" autocomplete="new-password"></label></div></div>
+              <div id="outbound-socks-fields" class="hidden"><label>SOCKS 版本<select id="new-outbound-version"><option value="5">SOCKS5</option><option value="4">SOCKS4</option></select></label><label class="check-line"><input id="new-outbound-udp" type="checkbox"> UDP over TCP</label><div id="new-outbound-udp-version-wrap" class="hidden"><label>封装版本<select id="new-outbound-udp-version"><option value="2">版本 2（推荐）</option><option value="1">版本 1</option></select></label></div></div>
+              <div id="outbound-tls-fields" class="hidden"><label class="check-line"><input id="new-outbound-tls" type="checkbox" checked> 启用 TLS</label><label>TLS 服务器名（SNI）<input id="new-outbound-sni" placeholder="默认使用远端服务器名"></label></div>
+            </div>
+          </div>
+          <div id="outbound-patch-wrap" class="hidden form-section"><label>选择已有出站<select id="object-tag"></select></label><div class="form-two"><label>远端服务器<input id="edit-outbound-server" placeholder="留空表示不修改"></label><label>远端端口<input id="edit-outbound-port" type="number" min="1" max="65535" placeholder="留空表示不修改"></label></div><div class="form-two"><label id="edit-outbound-user-label">用户名 / UUID<input id="edit-outbound-user" placeholder="留空表示不修改"></label><label id="edit-outbound-password-label">新密码<input id="edit-outbound-password" type="password" autocomplete="new-password" placeholder="留空表示不修改"></label></div><div id="edit-outbound-udp-wrap" class="hidden"><label>UDP over TCP<select id="edit-outbound-udp"><option value="keep">保持不变</option><option value="off">禁用</option><option value="2">启用 · 版本 2</option><option value="1">启用 · 版本 1</option></select></label><p id="edit-outbound-udp-current" class="hint"></p></div><p class="hint">只提交填写过的字段。直连出站没有远端地址，请使用 S-UI 编辑其他特殊参数。</p></div>
+          <div id="route-wrap" class="hidden form-section">
+            <div id="route-index-wrap" class="hidden"><label>选择现有规则<select id="route-index"></select></label></div>
+            <div id="route-rule-wrap"><label>匹配条件<select id="route-field"><option value="domain_suffix">域名后缀</option><option value="domain">完整域名</option><option value="domain_keyword">域名关键词</option><option value="ip_cidr">IP 网段</option><option value="port">目标端口</option><option value="protocol">协议</option><option value="inbound">入站 Tag</option><option value="auth_user">用户名称</option><option value="rule_set">规则集</option></select></label><label>匹配值（多个值用换行或逗号分隔）<textarea id="route-values" rows="3" placeholder="example.com"></textarea></label><label>处理方式<select id="route-action"><option value="route">走指定出站</option><option value="reject">拒绝</option><option value="hijack-dns">接管 DNS</option><option value="sniff">嗅探协议</option></select></label><div id="route-outbound-wrap"><label>目标出站<select id="route-outbound"></select></label></div></div>
+            <div id="route-position-wrap"><label>插入位置<select id="route-position"><option value="first">最前面（优先匹配）</option><option value="last">最后面</option><option value="before_index">指定规则之前</option></select></label><div id="route-before-wrap" class="hidden"><label>选择规则<select id="route-before"></select></label></div></div>
+            <p class="hint">按顺序匹配。选择规则时以第一台服务器为参照；预览会分别检查每台面板。</p>
+          </div>
+          <button id="preview" class="primary wide">生成预览</button>
+        </div>
+      </div>
+      <div id="preview-box" class="card hidden"></div>
+      <div id="result-box" class="card hidden"></div>
+      </details>
+    </section>
+    <section id="templates" class="tab-panel hidden">
+      <div class="section-head"><div><h2>配置模板库</h2><p>保存规则集、出站、sing-box 与 Mihomo 订阅模板，选择服务器后逐台预览并套用。</p></div><button id="template-new" class="primary">＋ 新建模板</button></div>
+      <nav id="template-kinds" class="template-kinds" aria-label="模板类别"></nav>
+      <div id="template-list" class="template-list"></div>
+      <div id="template-apply" class="card hidden"></div>
+    </section>
+    <section id="subscriptions" class="tab-panel hidden">
+      <div class="section-head"><div><h2>订阅管理</h2><p>管理 S-UI 订阅地址、用户状态与订阅链接。</p></div><button id="subscriptions-refresh" class="secondary">刷新</button></div>
+      <div class="card subscription-picker"><label>选择服务器<select id="subscription-server"></select></label><p class="hint">链接由 S-UI 的订阅设置生成，配置修改仍走逐台预览和备份。</p></div>
+      <div id="subscription-content"></div>
+    </section>
+    <section id="backups" class="tab-panel hidden"><div class="section-head"><div><h2>备份文件</h2><p>最近 100 个备份；下载后妥善保存，文件包含 S-UI 配置与令牌。</p></div><button id="refresh-backups" class="secondary">刷新列表</button></div><div id="backup-list" class="card"></div></section>
+    <section id="audit" class="tab-panel hidden"><div class="section-head"><div><h2>操作记录</h2><p>最近 100 条执行结果</p></div></div><div id="audit-list" class="card"></div></section>
+  </main>
+  <dialog id="server-dialog"><form id="server-form" method="dialog"><div class="dialog-head"><h2 id="dialog-title">添加 S-UI 面板</h2><button type="button" id="close-dialog" class="text-button">✕</button></div>
+    <input type="hidden" id="server-id"><label>名称<input id="server-name" required maxlength="100" placeholder="JP-BF"></label><label>地区<input id="server-region" maxlength="100" placeholder="日本 / 东京"></label><label>面板地址<input id="server-url" required type="url" placeholder="https://host:2095/app/"></label><label>API Token<input id="server-token" type="password" autocomplete="new-password" placeholder="编辑时留空表示保留原 Token"></label><label>Komari 节点 UUID<select id="server-komari"><option value="">不关联</option></select></label><p class="hint">面板地址须包含 S-UI 的实际 Web 路径。Token 仅保存在控制器数据库中，加密后写盘。</p><div class="dialog-actions"><button type="button" id="delete-server" class="danger hidden">删除面板</button><button type="submit" class="primary">保存</button></div>
+  </form></dialog>
+  <dialog id="detail-dialog" aria-labelledby="detail-title">
+    <div class="detail-toolbar">
+      <div class="dialog-head"><div><div class="eyebrow">服务器详情 · <span id="detail-region"></span></div><h2 id="detail-title"></h2></div><button id="close-detail" class="text-button" aria-label="关闭详情">✕</button></div>
+      <div class="detail-actions"><button id="configure-from-detail" class="primary">管理配置</button><a id="open-komari" class="secondary link-button hidden" target="_blank" rel="noopener noreferrer">↗ Komari 探针</a><a id="open-sui" class="secondary link-button" target="_blank" rel="noopener noreferrer">↗ 打开 S-UI</a><button id="edit-from-detail" class="secondary">编辑关联</button></div>
+      <nav class="detail-tabs" aria-label="服务器详情"><button class="active" data-detail-tab="overview">概览</button><button data-detail-tab="inbounds">入站</button><button data-detail-tab="outbounds">出站</button><button data-detail-tab="routes">路由</button><button data-detail-tab="clients">用户</button></nav>
+    </div>
+    <div id="detail-content" class="detail-content"></div>
+  </dialog>
+  <dialog id="single-editor-dialog" aria-labelledby="editor-title">
+    <div class="config-top"><div><div class="eyebrow">S-UI · 配置管理</div><h2 id="editor-title"></h2><p id="config-subtitle">选择左侧对象后直接编辑</p></div><div class="config-top-actions"><button id="open-full-config" class="secondary">全部配置项目</button><button id="close-editor" class="text-button" aria-label="关闭配置编辑">✕</button></div></div>
+    <nav id="config-tabs" class="config-tabs" aria-label="配置类别"></nav>
+    <div class="config-layout"><aside class="config-sidebar"><div class="config-list-head"><strong id="config-list-title"></strong><button id="config-add" class="primary">＋ 新增</button></div><div id="config-list" class="config-list"></div></aside><section id="config-workspace" class="config-workspace"></section></div>
+  </dialog>
+  <dialog id="full-config-dialog" aria-labelledby="full-config-title">
+    <div class="full-config-top"><div><div class="eyebrow">S-UI · 完整配置</div><h2 id="full-config-title"></h2><p>逐项编辑字段，预览后写入</p></div><button id="close-full-config" class="text-button" aria-label="关闭完整配置">✕</button></div>
+    <nav id="full-config-tabs" class="full-config-tabs" aria-label="S-UI 配置类别"></nav>
+    <div class="full-config-layout"><aside class="full-config-sidebar"><div class="full-config-list-head"><strong id="full-config-list-title"></strong><button id="full-config-new" class="primary">＋ 新增</button></div><div id="full-config-list"></div></aside><section id="full-config-workspace"></section></div>
+  </dialog>
+  <dialog id="template-dialog" aria-labelledby="template-dialog-title">
+    <div class="dialog-head"><div><div class="eyebrow">配置模板</div><h2 id="template-dialog-title">新建模板</h2></div><button id="template-close" class="text-button" aria-label="关闭">✕</button></div>
+    <form id="template-form"><label>模板名称<input id="template-name" required maxlength="100" placeholder="例如 香港直连规则"></label><label>类别<select id="template-kind"><option value="rule_set">远程规则集</option><option value="outbound">出站</option><option value="subscription_json">sing-box 订阅</option><option value="subscription_clash">Mihomo 订阅</option></select></label><div id="template-fields"></div><div class="dialog-actions"><button type="button" id="template-cancel" class="secondary">取消</button><button type="submit" class="primary">保存模板</button></div></form>
+  </dialog>
+</body>
+</html>

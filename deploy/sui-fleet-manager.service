@@ -1,0 +1,25 @@
+[Unit]
+Description=S-UI Fleet Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sui-fleet
+Group=sui-fleet
+WorkingDirectory=/opt/sui-fleet-manager
+EnvironmentFile=/etc/sui-fleet-manager.env
+ExecStart=/opt/sui-fleet-manager/fleet-manager
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/sui-fleet-manager
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

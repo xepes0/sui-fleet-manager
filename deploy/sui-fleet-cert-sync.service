@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh S-UI Fleet Manager TLS certificate
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/sui-fleet-cert-sync
