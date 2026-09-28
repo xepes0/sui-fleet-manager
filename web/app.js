@@ -7,18 +7,34 @@ const date = d => new Date(d).toLocaleString('zh-CN');
 async function api(path, options={}) {const res=await fetch('/api/'+path,{...options,headers:{'Content-Type':'application/json',...options.headers},cache:'no-store'});let body;try{body=await res.json()}catch{throw Error(`HTTP ${res.status}`)}if(!res.ok)throw Error(body.error||`HTTP ${res.status}`);return body}
 const jobDone = status => status==='completed'||status==='interrupted';
 const wait = ms => new Promise(resolve=>setTimeout(resolve,ms));
-function jobProgressText(job){return `后台任务 ${job.completed||0} / ${job.total||0} · 成功 ${job.succeeded||0} · 失败 ${job.failed||0}`}
+function jobProgressText(job){return `后台任务 ${job.completed||0} / ${job.total||0} · 成功 ${job.succeeded||0} · 失败 ${job.failed||0}${job.network_note?' · '+job.network_note:''}`}
 async function executePreview(previewID,onProgress){
-  const started=await api('operations/execute',{method:'POST',body:JSON.stringify({preview_id:previewID})});
+  let started;
+  try{
+    started=await api('operations/execute',{method:'POST',body:JSON.stringify({preview_id:previewID})});
+  }catch(e){
+    if(e instanceof TypeError||e.message==='Failed to fetch')throw Error('与控制器连接中断；请先打开“任务”确认是否已经启动，暂时不要重复执行');
+    throw e;
+  }
   if(!started.job_id&&!started.id)return started;
-  const id=started.job_id||started.id;let job=started,deadline=Date.now()+20*60*1000;
+  const id=started.job_id||started.id;let job=started,deadline=Date.now()+20*60*1000,networkFailures=0;
   while(!jobDone(job.status)){
     if(onProgress)onProgress(job);
-    if(Date.now()>deadline)throw Error('任务仍在后台执行，可在“任务”页面继续查看');
-    await wait(750);job=await api('jobs/'+encodeURIComponent(id));
+    if(Date.now()>deadline)throw Error(`任务 ${id} 仍在后台执行，可在“任务”页面继续查看`);
+    await wait(750);
+    try{
+      job=await api('jobs/'+encodeURIComponent(id));
+      networkFailures=0;
+    }catch(e){
+      if(!(e instanceof TypeError||e.message==='Failed to fetch'))throw e;
+      networkFailures++;
+      if(onProgress)onProgress({...job,status:'running',network_note:`连接暂时中断，正在重试（${networkFailures}/8）`});
+      if(networkFailures>=8)throw Error(`与控制器连接持续中断；任务 ${id} 可能仍在后台执行，请到“任务”页面确认`);
+      await wait(Math.min(5000,750*networkFailures));
+    }
   }
   if(onProgress)onProgress(job);
-  if(job.status==='interrupted')throw Error('任务因控制器重启而中断，请重新预览后执行');
+  if(job.status==='interrupted')throw Error(`任务 ${id} 因控制器重启而中断，请重新预览后执行`);
   return {results:job.results||[],job};
 }
 function notice(text){$('notice').textContent=text;$('notice').classList.remove('hidden')}
