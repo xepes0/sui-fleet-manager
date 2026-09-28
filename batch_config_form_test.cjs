@@ -234,3 +234,13 @@ test('batch result can stay visible while preview state is reset after execution
   assert.equal(state.previewHidden, true);
   assert.equal(state.resultHidden, false);
 });
+
+
+test('delete mode keeps the chosen configuration object selected', () => {
+  assert.match(batchSource, /i===bc\.index\?'selected':''/);
+  assert.doesNotMatch(batchSource, /i===bc\.index&&bc\.mode==='edit'/);
+  assert.match(
+    batchSource,
+    /if\(event\.target\.id==='batch-config-object'\)\{bc\.index=Number\(event\.target\.value\);bcSelect\(\);return\}/
+  );
+});
