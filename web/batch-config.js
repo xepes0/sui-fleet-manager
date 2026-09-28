@@ -288,8 +288,12 @@ async function bcPreview(){
 }
 async function bcExecute(){
   if(!bc.preview)return;const count=bc.preview.changes.filter(c=>!c.error).length;if(!confirm(`确认对 ${count} 台服务器写入配置？系统会逐台备份并检查版本。`))return;
-  const button=$('batch-config-execute');button.disabled=true;
-  try{const response=await api('operations/execute',{method:'POST',body:JSON.stringify({preview_id:bc.preview.id})});bc.preview=null;const resultHTML=`<h3>执行结果</h3>${response.results.map(r=>`<div class="batch-config-preview-row"><strong>${esc(r.name||'#'+r.server_id)}</strong>${status(r.ok?'成功':'需核对',r.ok?'ok':'bad')}<p class="${r.ok?'muted':'error'}">${esc(r.message)}</p>${r.backup?`<small>备份：<a href="/api/backups/${encodeURIComponent(r.backup)}">${esc(r.backup)}</a></small>`:''}</div>`).join('')}`;await refresh();await bcLoad();const box=$('batch-config-result');box.innerHTML=resultHTML;box.classList.remove('hidden');box.scrollIntoView({block:'start'});
+  const button=$('batch-config-execute'),box=$('batch-config-result');button.disabled=true;box.classList.remove('hidden');box.scrollIntoView({block:'start'});
+  try{
+    const response=await executePreview(bc.preview.id,job=>{box.innerHTML=`<h3>执行中</h3><p class="hint">${esc(jobProgressText(job))}</p>`});
+    bc.preview=null;
+    const resultHTML=`<h3>执行结果</h3>${response.results.map(r=>`<div class="batch-config-preview-row"><strong>${esc(r.name||'#'+r.server_id)}</strong>${status(r.ok?'成功':'需核对',r.ok?'ok':'bad')}<p class="${r.ok?'muted':'error'}">${esc(r.message)}</p>${r.backup?`<small>备份：<a href="/api/backups/${encodeURIComponent(r.backup)}">${esc(r.backup)}</a></small>`:''}</div>`).join('')}`;
+    await refresh();await bcLoad();box.innerHTML=resultHTML;
   }catch(e){bcError('执行失败：'+e.message);button.disabled=false}
 }
 document.addEventListener('click',event=>{
