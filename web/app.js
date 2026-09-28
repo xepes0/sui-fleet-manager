@@ -7,18 +7,34 @@ const date = d => new Date(d).toLocaleString('zh-CN');
 async function api(path, options={}) {const res=await fetch('/api/'+path,{...options,headers:{'Content-Type':'application/json',...options.headers},cache:'no-store'});let body;try{body=await res.json()}catch{throw Error(`HTTP ${res.status}`)}if(!res.ok)throw Error(body.error||`HTTP ${res.status}`);return body}
 const jobDone = status => status==='completed'||status==='interrupted';
 const wait = ms => new Promise(resolve=>setTimeout(resolve,ms));
-function jobProgressText(job){return `后台任务 ${job.completed||0} / ${job.total||0} · 成功 ${job.succeeded||0} · 失败 ${job.failed||0}`}
+function jobProgressText(job){return `后台任务 ${job.completed||0} / ${job.total||0} · 成功 ${job.succeeded||0} · 失败 ${job.failed||0}${job.network_note?' · '+job.network_note:''}`}
 async function executePreview(previewID,onProgress){
-  const started=await api('operations/execute',{method:'POST',body:JSON.stringify({preview_id:previewID})});
+  let started;
+  try{
+    started=await api('operations/execute',{method:'POST',body:JSON.stringify({preview_id:previewID})});
+  }catch(e){
+    if(e instanceof TypeError||e.message==='Failed to fetch')throw Error('与控制器连接中断；请先打开“任务”确认是否已经启动，暂时不要重复执行');
+    throw e;
+  }
   if(!started.job_id&&!started.id)return started;
-  const id=started.job_id||started.id;let job=started,deadline=Date.now()+20*60*1000;
+  const id=started.job_id||started.id;let job=started,deadline=Date.now()+20*60*1000,networkFailures=0;
   while(!jobDone(job.status)){
     if(onProgress)onProgress(job);
-    if(Date.now()>deadline)throw Error('任务仍在后台执行，可在“任务”页面继续查看');
-    await wait(750);job=await api('jobs/'+encodeURIComponent(id));
+    if(Date.now()>deadline)throw Error(`任务 ${id} 仍在后台执行，可在“任务”页面继续查看`);
+    await wait(750);
+    try{
+      job=await api('jobs/'+encodeURIComponent(id));
+      networkFailures=0;
+    }catch(e){
+      if(!(e instanceof TypeError||e.message==='Failed to fetch'))throw e;
+      networkFailures++;
+      if(onProgress)onProgress({...job,status:'running',network_note:`连接暂时中断，正在重试（${networkFailures}/8）`});
+      if(networkFailures>=8)throw Error(`与控制器连接持续中断；任务 ${id} 可能仍在后台执行，请到“任务”页面确认`);
+      await wait(Math.min(5000,750*networkFailures));
+    }
   }
   if(onProgress)onProgress(job);
-  if(job.status==='interrupted')throw Error('任务因控制器重启而中断，请重新预览后执行');
+  if(job.status==='interrupted')throw Error(`任务 ${id} 因控制器重启而中断，请重新预览后执行`);
   return {results:job.results||[],job};
 }
 function notice(text){$('notice').textContent=text;$('notice').classList.remove('hidden')}
@@ -188,8 +204,9 @@ async function doExecute(){
 }
 async function showBackups(){try{const rows=await api('backups');$('backup-list').innerHTML=rows.length?rows.map(x=>`<div class="audit-row"><a href="/api/backups/${encodeURIComponent(x.name)}">${esc(x.name)}</a><span class="muted"> · ${bytes(x.size)} · ${esc(date(x.created))}</span></div>`).join(''):'<div class="empty">尚无备份。可在批量操作中选择“备份数据库”。</div>'}catch(e){notice('备份列表加载失败：'+e.message)}}
 async function showAudit(){try{const rows=await api('audit');$('audit-list').innerHTML=rows.length?rows.map(x=>`<div class="audit-row">${status(x.ok?'成功':'失败',x.ok?'ok':'bad')} <strong>${esc(x.action)}</strong> · 服务器 #${esc(x.server_id)} <span class="muted">${esc(date(x.at))}</span><div class="muted">${esc(x.detail)}</div></div>`).join(''):'<div class="empty">尚无操作记录</div>'}catch(e){notice('记录加载失败：'+e.message)}}
-async function showJobs(){try{const rows=await api('jobs');$('job-list').innerHTML=rows.length?rows.map(x=>{const running=x.status==='queued'||x.status==='running',kind=x.status==='completed'?(x.failed?'bad':'ok'):x.status==='interrupted'?'bad':'';const label=running?'执行中':x.status==='completed'?'已完成':x.status==='interrupted'?'已中断':x.status;return `<div class="audit-row">${status(label,kind)} <strong>${esc(x.action)}</strong> <span class="muted">· ${esc(x.completed)} / ${esc(x.total)} · 成功 ${esc(x.succeeded)} · 失败 ${esc(x.failed)} · ${esc(date(x.updated_at))}</span><div class="muted">任务 ${esc(x.id)}</div></div>`}).join(''):'<div class="empty">尚无批量任务</div>'}catch(e){notice('任务列表加载失败：'+e.message)}}
-document.addEventListener('click',e=>{const edit=e.target.closest('[data-server-action]');if(edit){openSingleEditor(+(edit.dataset.serverId||state.detailID),edit.dataset.serverAction,edit.dataset.target||'');return}const associate=e.target.closest('[data-associate]');if(associate){const node=state.monitorNodes.find(x=>x.uuid===associate.dataset.associate);openServerForm(null);$('server-name').value=node?.name||'';$('server-region').value=node?.region||'';$('server-komari').value=associate.dataset.associate;return}const detail=e.target.closest('[data-open-detail]');if(detail){openDetail(detail.dataset.openDetail);return}if(!e.target.closest('[data-monitor-link]')){const card=e.target.closest('[data-detail]');if(card)openDetail(card.dataset.detail)}const tab=e.target.closest('[data-tab]');if(tab){document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===tab));document.querySelectorAll('.tab-panel').forEach(x=>x.classList.toggle('hidden',x.id!==tab.dataset.tab));if(tab.dataset.tab==='audit')showAudit();if(tab.dataset.tab==='backups')showBackups();if(tab.dataset.tab==='jobs')showJobs()}});
+async function showJobs(){try{const rows=await api('jobs');$('job-list').innerHTML=rows.length?rows.map(x=>{const running=x.status==='queued'||x.status==='running',kind=x.status==='completed'?(x.failed?'bad':'ok'):x.status==='interrupted'?'bad':'';const label=running?'执行中':x.status==='completed'?'已完成':x.status==='interrupted'?'已中断':x.status;return `<div class="audit-row">${status(label,kind)} <strong>${esc(x.action)}</strong> <span class="muted">· ${esc(x.completed)} / ${esc(x.total)} · 成功 ${esc(x.succeeded)} · 失败 ${esc(x.failed)} · ${esc(date(x.updated_at))}</span><button type="button" class="text-button" data-job-detail="${esc(x.id)}">查看详情</button><div class="muted">任务 ${esc(x.id)}</div><div id="job-detail-${esc(x.id)}" class="hidden"></div></div>`}).join(''):'<div class="empty">尚无批量任务</div>'}catch(e){notice('任务列表加载失败：'+e.message)}}
+async function showJobDetail(id){const box=$('job-detail-'+id);if(!box)return;if(!box.classList.contains('hidden')){box.classList.add('hidden');return}box.classList.remove('hidden');box.innerHTML='<p class="muted">正在读取任务详情…</p>';try{const job=await api('jobs/'+encodeURIComponent(id));box.innerHTML=(job.results||[]).map(r=>`<div class="preview-row"><strong>${esc(r.name||'#'+r.server_id)}</strong> ${status(r.ok?'成功':r.status==='interrupted'?'已中断':'失败',r.ok?'ok':'bad')}<p class="${r.ok?'muted':'error'}">${esc(r.message||'—')}</p>${r.backup?`<small>备份：<a href="/api/backups/${encodeURIComponent(r.backup)}">${esc(r.backup)}</a></small>`:''}</div>`).join('')||'<div class="empty">暂无任务明细</div>'}catch(e){box.innerHTML=`<p class="error">任务详情加载失败：${esc(e.message)}</p>`}}
+document.addEventListener('click',e=>{const job=e.target.closest('[data-job-detail]');if(job){showJobDetail(job.dataset.jobDetail);return}const edit=e.target.closest('[data-server-action]');if(edit){openSingleEditor(+(edit.dataset.serverId||state.detailID),edit.dataset.serverAction,edit.dataset.target||'');return}const associate=e.target.closest('[data-associate]');if(associate){const node=state.monitorNodes.find(x=>x.uuid===associate.dataset.associate);openServerForm(null);$('server-name').value=node?.name||'';$('server-region').value=node?.region||'';$('server-komari').value=associate.dataset.associate;return}const detail=e.target.closest('[data-open-detail]');if(detail){openDetail(detail.dataset.openDetail);return}if(!e.target.closest('[data-monitor-link]')){const card=e.target.closest('[data-detail]');if(card)openDetail(card.dataset.detail)}const tab=e.target.closest('[data-tab]');if(tab){document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===tab));document.querySelectorAll('.tab-panel').forEach(x=>x.classList.toggle('hidden',x.id!==tab.dataset.tab));if(tab.dataset.tab==='audit')showAudit();if(tab.dataset.tab==='backups')showBackups();if(tab.dataset.tab==='jobs')showJobs()}});
 document.addEventListener('change',e=>{if(e.target.matches('[data-pick]')){const id=+e.target.dataset.pick;e.target.checked?state.selected.add(id):state.selected.delete(id);state.preview=null;$('preview-box').classList.add('hidden');loadFormDetails()}if(['object-mode','object-type','route-position','route-action','new-outbound-udp'].includes(e.target.id))formModeChanged();if(e.target.id==='object-tag')outboundPatchModeChanged()});
 document.addEventListener('keydown',e=>{const c=e.target.closest('[data-detail]');if(c&&e.target===c&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openDetail(c.dataset.detail)}});
 $('refresh').onclick=refresh;$('refresh-backups').onclick=showBackups;$('refresh-jobs').onclick=showJobs;$('add').onclick=()=>openServerForm(null);$('server-form').onsubmit=saveServer;$('close-dialog').onclick=()=>$('server-dialog').close();$('delete-server').onclick=deleteServer;$('close-detail').onclick=()=>$('detail-dialog').close();$('configure-from-detail').onclick=()=>openSingleEditor(state.detailID,'inbound_patch');$('edit-from-detail').onclick=()=>{$('detail-dialog').close();openServerForm(state.servers.find(x=>x.id===state.detailID))};$('action').onchange=actionChanged;$('preview').onclick=doPreview;

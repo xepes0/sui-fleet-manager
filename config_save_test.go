@@ -515,14 +515,24 @@ func TestNewClientAddsLinksAndIgnoresTrafficOnlyListChanges(t *testing.T) {
 	panel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/app/apiv2/clients":
+			if r.URL.Query().Get("id") == "2" && saved != nil {
+				detail := cloneMap(saved)
+				detail["links"] = []any{map[string]any{"remark": "vless-main", "type": "local", "uri": "vless://generated"}}
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"clients": []any{detail}}})
+				return
+			}
 			clients := []any{
 				map[string]any{
 					"id": 1, "name": "existing", "enable": true, "up": traffic, "down": float64(0),
-					"inbounds": []any{float64(4)}, "config": map[string]any{"vless": map[string]any{"name": "existing", "uuid": "6fc83876-447e-4629-9998-2bda873bb70e"}},
+					"inbounds": []any{float64(4)},
 				},
 			}
 			if saved != nil {
-				clients = append(clients, saved)
+				clients = append(clients, map[string]any{
+					"id": saved["id"], "name": saved["name"], "enable": saved["enable"],
+					"remark": saved["remark"], "inbounds": saved["inbounds"],
+					"volume": saved["volume"], "expiry": saved["expiry"],
+				})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"clients": clients}})
 		case "/app/apiv2/inbounds":

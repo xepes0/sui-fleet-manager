@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -136,6 +138,27 @@ func (a *app) runJob(p preview, jobID string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					message := fmt.Sprintf("internal job panic: %v", recovered)
+					log.Printf("job %s server %d panic: %v", jobID, c.ServerID, recovered)
+					now := time.Now().UTC().Format(time.RFC3339)
+					result, _ := a.db.Exec(`
+						UPDATE job_items
+						SET status='failed',ok=0,message=?
+						WHERE job_id=? AND position=? AND status IN ('queued','running')
+					`, message, jobID, position)
+					if result != nil {
+						if affected, err := result.RowsAffected(); err == nil && affected > 0 {
+							_, _ = a.db.Exec(`
+								UPDATE jobs
+								SET completed=completed+1,failed=failed+1,updated_at=?
+								WHERE id=?
+							`, now, jobID)
+						}
+					}
+				}
+			}()
 
 			_, _ = a.db.Exec(`
 				UPDATE job_items SET status='running'
