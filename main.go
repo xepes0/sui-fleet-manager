@@ -619,6 +619,50 @@ func (a *app) suiPost(ctx context.Context, s server, endpoint string, form url.V
 	return nil
 }
 
+func isDialFailure(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
+func (a *app) komariDo(req *http.Request) (*http.Response, error) {
+	res, err := a.client.Do(req)
+	if err == nil || !isDialFailure(err) {
+		return res, err
+	}
+	host := req.URL.Hostname()
+	if host == "" || net.ParseIP(host) != nil || req.GetBody == nil {
+		return nil, err
+	}
+
+	retry := req.Clone(req.Context())
+	retryBody, bodyErr := req.GetBody()
+	if bodyErr != nil {
+		return nil, err
+	}
+	retry.Body = retryBody
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, splitErr := net.SplitHostPort(addr)
+		if splitErr != nil {
+			return nil, splitErr
+		}
+		dialer := &net.Dialer{Timeout: 5 * time.Second}
+		return dialer.DialContext(ctx, "tcp4", net.JoinHostPort(host, port))
+	}
+	client := &http.Client{
+		Timeout:       a.client.Timeout,
+		CheckRedirect: a.client.CheckRedirect,
+		Transport:     transport,
+	}
+	res, retryErr := client.Do(retry)
+	if retryErr == nil {
+		log.Printf("Komari connection used IPv4 fallback for %s", host)
+		return res, nil
+	}
+	return nil, fmt.Errorf("%v; IPv4 fallback failed: %w", err, retryErr)
+}
+
 func (a *app) komariRPC(ctx context.Context, method string) (map[string]any, error) {
 	return a.komariRPCWithParams(ctx, method, map[string]any{})
 }
@@ -636,7 +680,7 @@ func (a *app) komariRPCWithParams(ctx context.Context, method string, params map
 	if a.komariKey != "" {
 		req.Header.Set("Authorization", "Bearer "+a.komariKey)
 	}
-	res, err := a.client.Do(req)
+	res, err := a.komariDo(req)
 	if err != nil {
 		return nil, err
 	}

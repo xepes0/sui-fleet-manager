@@ -517,6 +517,11 @@ func TestNewClientAddsLinksAndIgnoresTrafficOnlyListChanges(t *testing.T) {
 		case "/app/apiv2/clients":
 			if r.URL.Query().Get("id") == "2" && saved != nil {
 				detail := cloneMap(saved)
+				// Older S-UI builds do not return every client field even on
+				// an ID-scoped lookup. Missing optional fields must not turn a
+				// successful create into a false failure.
+				delete(detail, "remark")
+				delete(detail, "config")
 				detail["links"] = []any{map[string]any{"remark": "vless-main", "type": "local", "uri": "vless://generated"}}
 				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"clients": []any{detail}}})
 				return
@@ -599,5 +604,21 @@ func TestNewClientAddsLinksAndIgnoresTrafficOnlyListChanges(t *testing.T) {
 	}
 	if saved == nil || saved["name"] != "new-user" {
 		t.Fatalf("client was not saved: %#v", saved)
+	}
+}
+
+
+func TestVerifyNewClientSavedRejectsReturnedMismatch(t *testing.T) {
+	expected := map[string]any{
+		"name": "alice",
+		"enable": true,
+		"config": map[string]any{"vless": map[string]any{"name": "alice", "uuid": "expected"}},
+	}
+	actual := map[string]any{
+		"name": "alice",
+		"enable": false,
+	}
+	if err := verifyNewClientSaved(expected, actual); err == nil || !strings.Contains(err.Error(), "field enable did not match") {
+		t.Fatalf("expected returned mismatch to fail verification, got %v", err)
 	}
 }

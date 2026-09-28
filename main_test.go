@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -342,5 +344,45 @@ func TestPublicListenRequiresTLS(t *testing.T) {
 		if loopbackListen(addr) {
 			t.Fatalf("accepted public or invalid listen %s", addr)
 		}
+	}
+}
+
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestKomariDoFallsBackToIPv4AfterDialFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{}"))
+	}))
+	defer server.Close()
+
+	a := testApp(t)
+	a.client = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("simulated dial failure")}
+		}),
+	}
+
+	target := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
+	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := a.komariDo(req)
+	if err != nil {
+		t.Fatalf("IPv4 fallback failed: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d", res.StatusCode)
 	}
 }
