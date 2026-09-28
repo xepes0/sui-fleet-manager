@@ -65,6 +65,23 @@ func (a *app) configurationHandler(w http.ResponseWriter, r *http.Request, s ser
 		}(target)
 	}
 	wg.Wait()
+	if rawConfig, ok := result["config"].(map[string]any); ok {
+		if route, ok := rawConfig["route"].(map[string]any); ok {
+			if rules, ok := route["rules"].([]any); ok {
+				result["routes"] = rules
+			} else if route["rules"] == nil {
+				result["routes"] = []any{}
+			} else {
+				errs["routes"] = "S-UI route rules are not an array"
+			}
+		} else if rawConfig["route"] == nil {
+			result["routes"] = []any{}
+		} else {
+			errs["routes"] = "S-UI route config is not an object"
+		}
+	} else if errs["config"] != "" {
+		errs["routes"] = errs["config"]
+	}
 	result["errors"] = errs
 	writeJSON(w, 200, result)
 }
