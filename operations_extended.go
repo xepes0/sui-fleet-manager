@@ -29,6 +29,11 @@ func decodeObject(raw json.RawMessage, label string) (map[string]any, error) {
 	return value, nil
 }
 
+func hasRouteMatch(raw json.RawMessage) bool {
+	value := strings.TrimSpace(string(raw))
+	return value != "" && value != "null"
+}
+
 func validateExtendedRequest(req previewRequest) error {
 	switch req.Action {
 	case "inbound_create", "outbound_create":
@@ -89,7 +94,7 @@ func validateExtendedRequest(req previewRequest) error {
 		}
 		fallthrough
 	case "route_rule_delete":
-		if len(req.RouteMatch) > 0 {
+		if hasRouteMatch(req.RouteMatch) {
 			if _, err := decodeObject(req.RouteMatch, "route match"); err != nil {
 				return err
 			}
@@ -350,7 +355,7 @@ func previewExtended(ctx context.Context, a *app, s server, req previewRequest, 
 		before := append([]any{}, rules...)
 		after := append([]any{}, rules...)
 		index := 0
-		if req.Action != "route_rule_add" && len(req.RouteMatch) > 0 {
+		if req.Action != "route_rule_add" && hasRouteMatch(req.RouteMatch) {
 			index, err = matchedRouteIndex(rules, req.RouteMatch)
 			if err != nil {
 				c.Error = err.Error()
