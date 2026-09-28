@@ -242,7 +242,7 @@ function bcRender(){
   const box=$('batch-config-content');if(!bc.data){box.innerHTML='<p class="muted">请选择服务器。</p>';return}
   if(bc.data.errors?.[bc.tab]){box.innerHTML=`<p class="error">${esc(bc.data.errors[bc.tab])}</p>`;return}
   const singleton=['config','settings'].includes(bc.tab),items=bcItems(),name=fcTabs.find(x=>x[0]===bc.tab)?.[1];
-  const selector=singleton?'':`<div class="batch-config-object-bar"><label>配置对象<select id="batch-config-object">${items.map((item,i)=>`<option value="${i}" ${i===bc.index&&bc.mode==='edit'?'selected':''}>${esc(item.name||item.tag||'#'+item.id)} · ${esc(item.type||'')}</option>`).join('')}</select></label><button id="batch-config-new" class="secondary">＋ 新增${esc(name)}</button></div>`;
+  const selector=singleton?'':`<div class="batch-config-object-bar"><label>配置对象<select id="batch-config-object">${items.map((item,i)=>`<option value="${i}" ${i===bc.index?'selected':''}>${esc(item.name||item.tag||'#'+item.id)} · ${esc(item.type||'')}</option>`).join('')}</select></label><button id="batch-config-new" class="secondary">＋ 新增${esc(name)}</button></div>`;
   const mode=singleton?'':`<div class="batch-config-mode"><button data-bc-mode="edit" class="${bc.mode==='edit'?'active':''}">修改字段</button><button data-bc-mode="new" class="${bc.mode==='new'?'active':''}">新增对象</button><button data-bc-mode="del" class="${bc.mode==='del'?'active':''}">删除对象</button></div>`;
   if(!bc.form&&bc.mode!=='new'){box.innerHTML=selector+mode+'<div class="empty">此类还没有对象。点击新增开始配置。</div>';return}
   const intro=bc.mode==='new'&&bc.tab==='inbounds'?'入站负责监听和订阅公开地址；用户密码或 UUID 在“用户”里设置。':bc.mode==='new'&&bc.tab==='clients'?'先选择可用入站，再填写对应协议凭据；预览会逐台匹配入站。':bc.mode==='new'?'将用下面的表单在每台服务器新建对象。':bc.mode==='del'?'将按名称或 Tag 在每台服务器定位对象并分别预览删除。':bc.tab==='settings'?'勾选要同步的设置值；未勾选的设置保持各服务器原值。':['inbounds','outbounds','endpoints','services'].includes(bc.tab)?'勾选要批量修改的字段；修改 Tag 时会逐台检查重名和配置引用。':'勾选要批量修改的字段；未勾选的字段保持各服务器原值。';
@@ -343,7 +343,7 @@ document.addEventListener('click',event=>{
 document.addEventListener('change',event=>{
   if(event.target.matches('[data-bc-server]')){const id=Number(event.target.dataset.bcServer);event.target.checked?state.selected.add(id):state.selected.delete(id);bcSelectionChanged();return}
   if(event.target.matches('[data-pick]')){bcLoad();return}
-  if(event.target.id==='batch-config-object'){bc.index=Number(event.target.value);bc.mode='edit';bcSelect();return}
+  if(event.target.id==='batch-config-object'){bc.index=Number(event.target.value);bcSelect();return}
   if(event.target.matches('[data-bc-client-server]')){const id=event.target.dataset.bcClientServer,tag=event.target.dataset.bcClientTag,selected=new Set(bc.clientTagsByServer[id]||[]);event.target.checked?selected.add(tag):selected.delete(tag);bc.clientTagsByServer[id]=[...selected];bcSyncClientCredentials();bcResetPreview();bcRender();return}
   if(event.target.matches('[data-bc-inbound-copy]')){bc.inboundCopy=event.target.dataset.bcInboundCopy==='true';if(bc.inboundCopy){const first=bcInboundList()[0];bc.sourceTag=first?.tag||'';if(first){bc.form=bcCopyInboundForm(first,bc.form.tag);bc.copyOriginal=structuredClone(bc.form)}}else{bc.sourceTag='';bc.copyOriginal=null;bc.form=bcInboundForm('vless',bc.form)}bcResetPreview();bcRender();return}
   if(event.target.id==='bc-inbound-source'){bc.sourceTag=event.target.value;const source=bcInboundList().find(item=>item.tag===bc.sourceTag);if(source){bc.form=bcCopyInboundForm(source,bc.form.tag);bc.copyOriginal=structuredClone(bc.form)}bcResetPreview();bcRender();return}
