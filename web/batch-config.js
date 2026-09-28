@@ -17,6 +17,25 @@ function bcObjectLabel(item,index){
   if(bc.tab==='routes')return bcRouteLabel(item,index);
   return `${item.name||item.tag||'#'+item.id} · ${item.type||''}`;
 }
+const bcRouteGroups={
+  inbound:{label:'入站管理',keys:['inbound'],defaults:{inbound:[]}},
+  client:{label:'用户管理',keys:['auth_user'],defaults:{auth_user:[]}},
+  ipver:{label:'IP 版本',keys:['ip_version'],defaults:{ip_version:4}},
+  network:{label:'网络',keys:['network'],defaults:{network:['tcp']}},
+  protocol:{label:'协议',keys:['protocol'],defaults:{protocol:['http']}},
+  domain:{label:'域名 / IP',keys:['domain','domain_suffix','domain_keyword','domain_regex','ip_cidr','ip_is_private'],defaults:{domain:[]}},
+  port:{label:'端口',keys:['port','port_range'],defaults:{port:[]}},
+  srcip:{label:'源 IP',keys:['source_ip_cidr','source_ip_is_private'],defaults:{source_ip_cidr:[]}},
+  srcport:{label:'源端口',keys:['source_port','source_port_range'],defaults:{source_port:[]}},
+  preferred:{label:'优选出站',keys:['preferred_by'],defaults:{preferred_by:[]}},
+  interface:{label:'接口地址',keys:['interface_address','network_interface_address','default_interface_address'],defaults:{interface_address:[]}},
+  ruleset:{label:'规则集',keys:['rule_set','rule_set_ip_cidr_match_source'],defaults:{rule_set:[],rule_set_ip_cidr_match_source:false}}
+};
+const bcRouteProtocols=['http','tls','quic','stun','dns','bittorrent','dtls','ssh','rdp','ntp'];
+const bcRouteActions=[
+  ['route','Route'],['route-options','Route Options'],['bypass','Bypass'],['reject','Reject'],
+  ['hijack-dns','Hijack DNS'],['sniff','Sniff'],['resolve','Resolve']
+];
 function bcRouteRuleFromText(){
   let rule;
   try{rule=JSON.parse(bc.routeText)}catch{throw Error('路由规则 JSON 格式无效')}
@@ -24,8 +43,101 @@ function bcRouteRuleFromText(){
   if(!rule.action&&!rule.outbound)throw Error('路由规则至少需要 action 或 outbound');
   return rule;
 }
+function bcRouteCurrentRule(){
+  const rule=structuredClone(bc.form||{});
+  if(!rule.action&&rule.outbound)rule.action='route';
+  if(!rule.action)throw Error('请选择路由操作');
+  if(rule.action==='route'&&!String(rule.outbound||'').trim())throw Error('Route 操作需要选择出站');
+  return rule;
+}
+function bcRouteSyncText(){bc.routeText=JSON.stringify(bc.form||{},null,2)}
+function bcRouteGroupEnabled(group){return bcRouteGroups[group].keys.some(key=>Object.hasOwn(bc.form||{},key))}
+function bcRouteToggleGroup(group,enabled){
+  const spec=bcRouteGroups[group];
+  if(enabled){
+    if(!bcRouteGroupEnabled(group))for(const [key,value] of Object.entries(spec.defaults))bc.form[key]=structuredClone(value);
+  }else for(const key of spec.keys)delete bc.form[key];
+  bcRouteSyncText();bcResetPreview();bcRender();
+}
+function bcRouteSwitchSubgroup(group,key){
+  const spec=bcRouteGroups[group];
+  for(const name of spec.keys)delete bc.form[name];
+  bc.form[key]=['ip_is_private','source_ip_is_private'].includes(key)?false:[];
+  bcRouteSyncText();bcResetPreview();bcRender();
+}
+function bcRouteLines(value){return Array.isArray(value)?value.join('\n'):''}
+function bcRouteSplit(value,numeric=false){
+  const items=String(value||'').split(/[\n,]+/).map(x=>x.trim()).filter(Boolean);
+  if(!numeric)return items;
+  return items.map(x=>Number(x)).filter(x=>Number.isInteger(x)&&x>=0&&x<=65535);
+}
+function bcRouteKnownTags(type){
+  if(type==='inbound')return (bc.data?.inbounds||[]).map(item=>item.tag).filter(Boolean);
+  if(type==='client')return (bc.data?.clients||[]).map(item=>item.name).filter(Boolean);
+  if(type==='outbound')return [...(bc.data?.outbounds||[]),...(bc.data?.endpoints||[])].map(item=>item.tag).filter(Boolean);
+  if(type==='ruleset'){
+    const sets=bc.data?.config?.route?.rule_set;
+    return Array.isArray(sets)?sets.map(item=>item?.tag).filter(Boolean):[];
+  }
+  return [];
+}
+function bcRouteTagField(key,label,type){
+  const known=bcRouteKnownTags(type),value=Array.isArray(bc.form[key])?bc.form[key]:[];
+  return `<label>${esc(label)}<textarea data-bc-route-list="${key}" rows="3" placeholder="${known.length?'可填写 Tag；多个值换行':'多个值用换行分隔'}">${esc(bcRouteLines(value))}</textarea>${known.length?`<small class="hint">当前参考面板：${known.slice(0,12).map(esc).join('、')}${known.length>12?'…':''}</small>`:''}</label>`;
+}
+function bcRouteGroupBody(group){
+  switch(group){
+    case 'inbound': return bcRouteTagField('inbound','入站 Tag','inbound');
+    case 'client': return bcRouteTagField('auth_user','用户名称','client');
+    case 'ipver': return `<label>IP 版本<select data-bc-route-value="ip_version"><option value="4" ${bc.form.ip_version===4?'selected':''}>IPv4</option><option value="6" ${bc.form.ip_version===6?'selected':''}>IPv6</option></select></label>`;
+    case 'network': return `<div class="route-chip-grid">${['tcp','udp','icmp'].map(x=>`<label class="batch-config-pick"><input type="checkbox" data-bc-route-array="network" value="${x}" ${(bc.form.network||[]).includes(x)?'checked':''}><span><strong>${x.toUpperCase()}</strong></span></label>`).join('')}</div>`;
+    case 'protocol': return `<div class="route-chip-grid">${bcRouteProtocols.map(x=>`<label class="batch-config-pick"><input type="checkbox" data-bc-route-array="protocol" value="${x}" ${(bc.form.protocol||[]).includes(x)?'checked':''}><span><strong>${x.toUpperCase()}</strong></span></label>`).join('')}</div>`;
+    case 'domain': {
+      const keys=['domain','domain_suffix','domain_keyword','domain_regex','ip_cidr','ip_is_private'],active=keys.find(key=>Object.hasOwn(bc.form,key))||'domain';
+      const names={domain:'完整域名',domain_suffix:'域名后缀',domain_keyword:'域名关键词',domain_regex:'域名正则',ip_cidr:'IP / CIDR',ip_is_private:'私有 IP'};
+      const input=active==='ip_is_private'?`<label class="batch-config-choice"><input type="checkbox" data-bc-route-bool="ip_is_private" ${bc.form.ip_is_private?'checked':''}> 匹配私有 IP</label>`:`<label>${names[active]}<textarea data-bc-route-list="${active}" rows="4" placeholder="多个值用换行分隔">${esc(bcRouteLines(bc.form[active]))}</textarea></label>`;
+      return `<label>匹配类型<select data-bc-route-subgroup="domain">${keys.map(key=>`<option value="${key}" ${active===key?'selected':''}>${names[key]}</option>`).join('')}</select></label>${input}`;
+    }
+    case 'port': {
+      const active=Object.hasOwn(bc.form,'port_range')?'port_range':'port',names={port:'端口',port_range:'端口范围'};
+      return `<label>端口类型<select data-bc-route-subgroup="port"><option value="port" ${active==='port'?'selected':''}>端口</option><option value="port_range" ${active==='port_range'?'selected':''}>端口范围</option></select></label><label>${names[active]}<textarea data-bc-route-list="${active}" data-bc-route-numeric="${active==='port'?'true':'false'}" rows="3" placeholder="${active==='port'?'80\n443':'1000:2000'}">${esc(bcRouteLines(bc.form[active]))}</textarea></label>`;
+    }
+    case 'srcip': {
+      const active=Object.hasOwn(bc.form,'source_ip_is_private')?'source_ip_is_private':'source_ip_cidr';
+      return `<label>源 IP 类型<select data-bc-route-subgroup="srcip"><option value="source_ip_cidr" ${active==='source_ip_cidr'?'selected':''}>源 IP / CIDR</option><option value="source_ip_is_private" ${active==='source_ip_is_private'?'selected':''}>私有源 IP</option></select></label>${active==='source_ip_is_private'?`<label class="batch-config-choice"><input type="checkbox" data-bc-route-bool="source_ip_is_private" ${bc.form.source_ip_is_private?'checked':''}> 匹配私有源 IP</label>`:`<label>源 IP / CIDR<textarea data-bc-route-list="source_ip_cidr" rows="3">${esc(bcRouteLines(bc.form.source_ip_cidr))}</textarea></label>`}`;
+    }
+    case 'srcport': {
+      const active=Object.hasOwn(bc.form,'source_port_range')?'source_port_range':'source_port';
+      return `<label>源端口类型<select data-bc-route-subgroup="srcport"><option value="source_port" ${active==='source_port'?'selected':''}>源端口</option><option value="source_port_range" ${active==='source_port_range'?'selected':''}>源端口范围</option></select></label><label>${active==='source_port'?'源端口':'源端口范围'}<textarea data-bc-route-list="${active}" data-bc-route-numeric="${active==='source_port'?'true':'false'}" rows="3">${esc(bcRouteLines(bc.form[active]))}</textarea></label>`;
+    }
+    case 'preferred': return bcRouteTagField('preferred_by','优选出站 Tag','outbound');
+    case 'interface': {
+      const keys=['interface_address','network_interface_address','default_interface_address'],active=keys.find(key=>Object.hasOwn(bc.form,key))||'interface_address';
+      const names={interface_address:'接口地址',network_interface_address:'网络接口地址',default_interface_address:'默认接口地址'};
+      return `<label>接口类型<select data-bc-route-subgroup="interface">${keys.map(key=>`<option value="${key}" ${active===key?'selected':''}>${names[key]}</option>`).join('')}</select></label><label>${names[active]}<textarea data-bc-route-list="${active}" rows="3">${esc(bcRouteLines(bc.form[active]))}</textarea></label>`;
+    }
+    case 'ruleset': return `${bcRouteTagField('rule_set','规则集 Tag','ruleset')}<label class="batch-config-choice"><input type="checkbox" data-bc-route-bool="rule_set_ip_cidr_match_source" ${bc.form.rule_set_ip_cidr_match_source?'checked':''}> Rule Set 的 IP CIDR 匹配源地址</label>`;
+  }
+  return '';
+}
+function bcRouteActionFields(){
+  const action=bc.form.action||'route';
+  if(action==='route'){
+    const tags=bcRouteKnownTags('outbound');
+    return `<label>出站<select data-bc-route-value="outbound"><option value="">请选择出站</option>${tags.map(tag=>`<option value="${esc(tag)}" ${bc.form.outbound===tag?'selected':''}>${esc(tag)}</option>`).join('')}</select></label>`;
+  }
+  if(action==='route-options')return `<div class="route-action-grid"><label>覆盖地址<input data-bc-route-value="override_address" value="${esc(bc.form.override_address||'')}"></label><label>覆盖端口<input type="number" min="0" max="65534" data-bc-route-value="override_port" value="${esc(bc.form.override_port||0)}"></label><label class="batch-config-choice"><input type="checkbox" data-bc-route-bool="udp_disable_domain_unmapping" ${bc.form.udp_disable_domain_unmapping?'checked':''}> 禁用 UDP 域名反解</label><label class="batch-config-choice"><input type="checkbox" data-bc-route-bool="udp_connect" ${bc.form.udp_connect?'checked':''}> UDP Connect</label><label>UDP 超时<input data-bc-route-value="udp_timeout" value="${esc(bc.form.udp_timeout||'')}"></label></div>`;
+  if(action==='reject')return `<div class="route-action-grid"><label>拒绝方式<select data-bc-route-value="method"><option value="" ${!bc.form.method?'selected':''}>默认</option><option value="default" ${bc.form.method==='default'?'selected':''}>Default</option><option value="drop" ${bc.form.method==='drop'?'selected':''}>Drop</option></select></label><label class="batch-config-choice"><input type="checkbox" data-bc-route-bool="no_drop" ${bc.form.no_drop?'checked':''}> No Drop</label></div>`;
+  if(action==='sniff')return `<div class="route-action-grid"><label>嗅探协议<textarea data-bc-route-list="sniffer" rows="2">${esc(bcRouteLines(bc.form.sniffer||[]))}</textarea></label><label>超时<input data-bc-route-value="timeout" value="${esc(bc.form.timeout||'')}"></label></div>`;
+  if(action==='resolve')return `<div class="route-action-grid"><label>策略<select data-bc-route-value="strategy"><option value=""></option>${['prefer_ipv4','prefer_ipv6','ipv4_only','ipv6_only'].map(x=>`<option value="${x}" ${bc.form.strategy===x?'selected':''}>${x}</option>`).join('')}</select></label><label>DNS 服务器<input data-bc-route-value="server" value="${esc(bc.form.server||'')}"></label></div>`;
+  return '<p class="hint">此操作没有额外参数。</p>';
+}
 function bcRouteFields(){
-  return `<div class="batch-config-guided"><section class="batch-config-section"><h4>路由规则 JSON</h4><p class="hint">支持 S-UI / sing-box 的完整规则字段。批量修改和删除会按“整条原规则内容”在每台服务器匹配，不按序号盲删，避免各机器规则顺序不同导致误操作。</p><textarea id="bc-route-json" rows="12" spellcheck="false">${esc(bc.routeText)}</textarea></section></div>`;
+  if(bc.form?.type==='logical'){
+    return `<div class="batch-config-guided"><section class="batch-config-section"><h4>逻辑规则</h4><p class="hint">这是一条 S-UI 逻辑规则。常用简单规则可直接用可视化表单；逻辑规则目前请使用下面的高级 JSON，保存与批量安全校验仍然有效。</p><details class="batch-config-extra" open><summary>高级 JSON</summary><textarea id="bc-route-json" rows="14" spellcheck="false">${esc(bc.routeText)}</textarea><button id="bc-route-json-apply" class="secondary" type="button">应用 JSON</button></details></section></div>`;
+  }
+  const groups=Object.entries(bcRouteGroups).map(([key,spec])=>`<div class="route-option"><label class="batch-config-choice"><input type="checkbox" data-bc-route-toggle="${key}" ${bcRouteGroupEnabled(key)?'checked':''}> <strong>${spec.label}</strong></label>${bcRouteGroupEnabled(key)?`<div class="route-option-body">${bcRouteGroupBody(key)}</div>`:''}</div>`).join('');
+  return `<div class="batch-config-guided"><section class="batch-config-section"><h4>规则匹配条件</h4><p class="hint">和 S-UI 一样，勾选需要的匹配项再填写内容；未开启的条件不会写入规则。</p><div class="route-option-grid">${groups}</div></section><section class="batch-config-section"><h4>操作</h4><div class="route-action-grid"><label>操作类型<select data-bc-route-action>${bcRouteActions.map(([value,label])=>`<option value="${value}" ${(bc.form.action||'route')===value?'selected':''}>${label}</option>`).join('')}</select></label><label class="batch-config-choice"><input type="checkbox" data-bc-route-bool="invert" ${bc.form.invert?'checked':''}> 反选结果</label></div>${bcRouteActionFields()}</section><details class="batch-config-extra"><summary>高级 JSON（可选）</summary><p class="hint">只有可视化表单未覆盖的 sing-box 高级字段才需要在这里修改。</p><textarea id="bc-route-json" rows="12" spellcheck="false">${esc(bc.routeText)}</textarea><button id="bc-route-json-apply" class="secondary" type="button">应用 JSON</button></details></div>`;
 }
 const bcDefault=type=>type==='text'?'':type==='number'?0:type==='boolean'?false:type==='list'?[]:{};
 const bcOutboundTypes=[['socks','SOCKS'],['http','HTTP'],['vless','VLESS'],['trojan','Trojan'],['hysteria2','Hysteria2'],['anytls','AnyTLS'],['shadowsocks','Shadowsocks'],['direct','直连'],['block','阻断']];
@@ -306,10 +418,10 @@ function bcMark(path,op='set'){
 function bcRequest(){
   const ids=bcSelected();if(!ids.length)throw Error('请先选择服务器');
   if(bc.tab==='routes'){
-    if(bc.mode==='new')return {server_ids:ids,action:'route_rule_add',route_rule:bcRouteRuleFromText(),route_position:'last'};
+    if(bc.mode==='new')return {server_ids:ids,action:'route_rule_add',route_rule:bcRouteCurrentRule(),route_position:'last'};
     if(!bc.original)throw Error('请选择路由规则');
     if(bc.mode==='del')return {server_ids:ids,action:'route_rule_delete',route_match:structuredClone(bc.original)};
-    const rule=bcRouteRuleFromText();
+    const rule=bcRouteCurrentRule();
     if(JSON.stringify(rule)===JSON.stringify(bc.original))throw Error('请先修改路由规则');
     return {server_ids:ids,action:'route_rule_replace',route_rule:rule,route_match:structuredClone(bc.original)};
   }
@@ -364,6 +476,7 @@ document.addEventListener('click',event=>{
   if(event.target.closest('#batch-config-new')){bcNew();return}
   if(event.target.closest('#batch-config-client-shortcut')){bc.tab='clients';bcNew();return}
   const mode=event.target.closest('[data-bc-mode]');if(mode){if(mode.dataset.bcMode==='new')bcNew();else{bc.mode=mode.dataset.bcMode;bcSelect();}return}
+  if(event.target.closest('#bc-route-json-apply')){try{bc.form=bcRouteRuleFromText();bcRouteSyncText();bcResetPreview();bcRender()}catch(e){bcError(e.message)}return}
   if(event.target.closest('#batch-config-review')){bcPreview();return}
   if(event.target.closest('#batch-config-execute')){bcExecute();return}
   const clientAll=event.target.closest('[data-bc-client-all]');if(clientAll){const id=clientAll.dataset.bcClientAll,items=(bc.inboundOptions[id]?.items||[]).filter(bcClientSupported),selected=bc.clientTagsByServer[id]||[];bc.clientTagsByServer[id]=selected.length===items.length?[]:items.map(item=>item.tag);bcSyncClientCredentials();bcResetPreview();bcRender();return}
@@ -372,6 +485,19 @@ document.addEventListener('click',event=>{
   const add=event.target.closest('[data-bc-add]');if(add){const row=add.closest('[data-bc-container]'),path=JSON.parse(decodeURIComponent(row.dataset.bcContainer)),parent=path.length?bcRead(path):bc.form,type=row.querySelector('[data-bc-type]').value,key=row.querySelector('[data-bc-key]').value.trim();if(!parent||Array.isArray(parent)){bcError('请在对象中添加字段；列表请先在单机完整配置中调整');return}if(!key||['__proto__','prototype','constructor','id'].includes(key)||Object.hasOwn(parent,key)){bcError('请输入一个新的有效字段名');return}parent[key]=bcDefault(type);if(bc.mode==='edit')bcMark([...path,key]);bcRender();const extra=[...document.querySelectorAll('[data-bc-extra-path]')].find(item=>item.dataset.bcExtraPath===row.dataset.bcContainer);if(extra)extra.open=true;return}
 });
 document.addEventListener('change',event=>{
+  if(event.target.matches('[data-bc-route-toggle]')){bcRouteToggleGroup(event.target.dataset.bcRouteToggle,event.target.checked);return}
+  if(event.target.matches('[data-bc-route-subgroup]')){bcRouteSwitchSubgroup(event.target.dataset.bcRouteSubgroup,event.target.value);return}
+  if(event.target.matches('[data-bc-route-action]')){
+    const action=event.target.value;
+    for(const key of ['outbound','override_address','override_port','network_strategy','fallback_delay','udp_disable_domain_unmapping','udp_connect','udp_timeout','method','no_drop','sniffer','timeout','strategy','server'])delete bc.form[key];
+    bc.form.action=action;
+    if(action==='route')bc.form.outbound=bcRouteKnownTags('outbound')[0]||'';
+    if(action==='sniff')bc.form.sniffer=[];
+    bcRouteSyncText();bcResetPreview();bcRender();return
+  }
+  if(event.target.matches('[data-bc-route-array]')){const key=event.target.dataset.bcRouteArray,current=new Set(Array.isArray(bc.form[key])?bc.form[key]:[]);event.target.checked?current.add(event.target.value):current.delete(event.target.value);bc.form[key]=[...current];bcRouteSyncText();bcResetPreview();return}
+  if(event.target.matches('[data-bc-route-bool]')){bc.form[event.target.dataset.bcRouteBool]=event.target.checked;bcRouteSyncText();bcResetPreview();return}
+  if(event.target.matches('[data-bc-route-value]')){const key=event.target.dataset.bcRouteValue,value=event.target.type==='number'?Number(event.target.value):event.target.value;if(value===''&&key!=='outbound')delete bc.form[key];else bc.form[key]=value;bcRouteSyncText();bcResetPreview();return}
   if(event.target.matches('[data-bc-server]')){const id=Number(event.target.dataset.bcServer);event.target.checked?state.selected.add(id):state.selected.delete(id);bcSelectionChanged();return}
   if(event.target.matches('[data-pick]')){bcLoad();return}
   if(event.target.id==='batch-config-object'){bc.index=Number(event.target.value);bcSelect();return}
@@ -389,6 +515,8 @@ document.addEventListener('change',event=>{
 });
 document.addEventListener('input',event=>{
   if(event.target.id==='bc-route-json'){bc.routeText=event.target.value;bcResetPreview();return}
+  if(event.target.matches('[data-bc-route-list]')){const key=event.target.dataset.bcRouteList,numeric=event.target.dataset.bcRouteNumeric==='true';bc.form[key]=bcRouteSplit(event.target.value,numeric);bcRouteSyncText();bcResetPreview();return}
+  if(event.target.matches('[data-bc-route-value]')&&event.target.tagName!=='SELECT'){const key=event.target.dataset.bcRouteValue,value=event.target.type==='number'?Number(event.target.value):event.target.value;if(value===''&&key!=='outbound')delete bc.form[key];else bc.form[key]=value;bcRouteSyncText();bcResetPreview();return}
   if(event.target.matches('[data-bc-public-server],[data-bc-public-port]')){const id=event.target.dataset.bcPublicServer||event.target.dataset.bcPublicPort;bc.publicAddrs[id]??={server:'',port:bc.form.listen_port};if(event.target.dataset.bcPublicServer)bc.publicAddrs[id].server=event.target.value.trim();else bc.publicAddrs[id].port=Number(event.target.value);bcResetPreview();return}
   if(event.target.matches('[data-bc-volume],[data-bc-expiry]')){const key=event.target.matches('[data-bc-volume]')?'volume':'expiry',value=key==='volume'?Math.round(Number(event.target.value)*bcGiB):event.target.value?Math.floor(Date.parse(event.target.value+'T23:59:59Z')/1000):0;if(!Number.isFinite(value))return;bc.form[key]=value;if(bc.mode==='edit')bcMark([key]);else bcResetPreview();return}
   if(!event.target.matches('[data-bc-value]')||event.target.tagName==='SELECT')return;const path=JSON.parse(decodeURIComponent(event.target.dataset.bcValue)),old=bcRead(path);if(event.target.type==='number'&&event.target.value==='')return;bcParent(path)[path.at(-1)]=typeof old==='number'?Number(event.target.value):event.target.value;if(bc.mode==='edit'){bcMark(path);const checkbox=event.target.closest('.batch-config-field')?.querySelector('[data-bc-check]');if(checkbox)checkbox.checked=true}

@@ -274,3 +274,48 @@ test('batch route edits reject invalid or empty JSON rules', () => {
   context.bc.routeText = '{"domain_suffix":["example.com"]}';
   assert.throws(() => context.bcRouteRuleFromText(), /action 或 outbound/);
 });
+
+
+test('visual route editor exposes S-UI style condition switches and actions', () => {
+  const routeHelpers = batchSource.slice(batchSource.indexOf('const bcTabs='), batchSource.indexOf('const bcDefault='));
+  const context = {
+    fcTabs: [['clients','用户'],['inbounds','入站'],['outbounds','出站']],
+    structuredClone,
+    esc: value => String(value ?? ''),
+    bc: {
+      tab:'routes',
+      routeText:'',
+      form:{action:'route',outbound:'direct',ip_cidr:['172.18.0.1/32'],network:['tcp']},
+      data:{
+        inbounds:[{tag:'vless-in'}],
+        clients:[{name:'alice'}],
+        outbounds:[{tag:'direct'},{tag:'proxy'}],
+        endpoints:[],
+        config:{route:{rule_set:[{tag:'geosite-cn'}]}}
+      }
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(routeHelpers, context);
+  const html = vm.runInContext('bcRouteFields()', context);
+  assert.match(html, /入站管理/);
+  assert.match(html, /用户管理/);
+  assert.match(html, /IP 版本/);
+  assert.match(html, /域名 \/ IP/);
+  assert.match(html, /源 IP/);
+  assert.match(html, /接口地址/);
+  assert.match(html, /规则集/);
+  assert.match(html, /操作类型/);
+  assert.match(html, /Route Options/);
+  assert.match(html, /高级 JSON（可选）/);
+  assert.match(html, /172\.18\.0\.1\/32/);
+  assert.match(html, /direct/);
+});
+
+test('visual route request uses the form object while advanced JSON remains optional', () => {
+  assert.match(batchSource, /action:'route_rule_add',route_rule:bcRouteCurrentRule\(\),route_position:'last'/);
+  assert.match(batchSource, /action:'route_rule_replace',route_rule:rule,route_match:structuredClone\(bc\.original\)/);
+  assert.match(batchSource, /data-bc-route-toggle/);
+  assert.match(batchSource, /data-bc-route-action/);
+  assert.match(batchSource, /id="bc-route-json-apply"/);
+});
