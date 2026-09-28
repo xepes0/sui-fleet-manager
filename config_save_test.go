@@ -506,3 +506,88 @@ func TestBatchTagRenameChecksReferencesAndConflicts(t *testing.T) {
 		t.Fatalf("safe rename failed: %s", w.Body.String())
 	}
 }
+
+
+func TestNewClientAddsLinksAndIgnoresTrafficOnlyListChanges(t *testing.T) {
+	a := testApp(t)
+	traffic := float64(1)
+	var saved map[string]any
+	panel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/apiv2/clients":
+			clients := []any{
+				map[string]any{
+					"id": 1, "name": "existing", "enable": true, "up": traffic, "down": float64(0),
+					"inbounds": []any{float64(4)}, "config": map[string]any{"vless": map[string]any{"name": "existing", "uuid": "6fc83876-447e-4629-9998-2bda873bb70e"}},
+				},
+			}
+			if saved != nil {
+				clients = append(clients, saved)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"clients": clients}})
+		case "/app/apiv2/inbounds":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"inbounds": []any{map[string]any{"id": 4, "tag": "vless-main", "type": "vless"}}}})
+		case "/app/apiv2/getdb":
+			w.Write(append([]byte("SQLite format 3\x00"), bytes.Repeat([]byte{0}, 32)...))
+		case "/app/apiv2/save":
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
+				return
+			}
+			if r.Form.Get("object") != "clients" || r.Form.Get("action") != "new" {
+				t.Errorf("unexpected save form: %v", r.Form)
+				return
+			}
+			if err := json.Unmarshal([]byte(r.Form.Get("data")), &saved); err != nil {
+				t.Errorf("invalid client JSON: %v", err)
+				return
+			}
+			links, ok := saved["links"].([]any)
+			if !ok || len(links) != 0 {
+				t.Errorf("new client links must be an empty JSON array: %#v", saved["links"])
+			}
+			saved["id"] = float64(2)
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "msg": "save", "obj": map[string]any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer panel.Close()
+
+	id := addTestServer(t, a, panel.URL)
+	req := previewRequest{
+		ServerIDs:              []int64{id},
+		Action:                 "config_save",
+		ConfigTarget:           "clients",
+		ConfigMode:             "new",
+		ConfigInboundsByServer: map[string][]string{fmt.Sprint(id): {"vless-main"}},
+		Object: json.RawMessage(`{"name":"new-user","remark":"New User","enable":true,"volume":0,"expiry":0,"config":{"vless":{"name":"new-user","uuid":"25e7c194-e95d-487a-a633-05f7e1a5d13c"}},"inbounds":[]}`),
+	}
+	w := postJSON(t, a.previewHandler, "/api/operations/preview", req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview: %d %s", w.Code, w.Body.String())
+	}
+	var p preview
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Changes) != 1 || p.Changes[0].Error != "" {
+		t.Fatalf("unexpected preview: %s", w.Body.String())
+	}
+	var after map[string]any
+	if err := json.Unmarshal(p.Changes[0].After, &after); err != nil {
+		t.Fatal(err)
+	}
+	if links, ok := after["links"].([]any); !ok || len(links) != 0 {
+		t.Fatalf("preview did not normalize links: %#v", after["links"])
+	}
+
+	traffic = 2
+	w = executePreviewTest(t, a, p.ID)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Fatalf("execute after traffic change: %d %s", w.Code, w.Body.String())
+	}
+	if saved == nil || saved["name"] != "new-user" {
+		t.Fatalf("client was not saved: %#v", saved)
+	}
+}
