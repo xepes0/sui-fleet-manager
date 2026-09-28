@@ -470,6 +470,60 @@ func normalizeNewClientTemplate(template map[string]any) error {
 }
 
 
+func clientDetailAfterSave(ctx context.Context, a *app, s server, summary map[string]any) (map[string]any, error) {
+	id, ok := summary["id"]
+	if !ok {
+		return summary, nil
+	}
+	var idText string
+	switch value := id.(type) {
+	case float64:
+		idText = strconv.FormatInt(int64(value), 10)
+	case int64:
+		idText = strconv.FormatInt(value, 10)
+	case int:
+		idText = strconv.Itoa(value)
+	default:
+		idText = fmt.Sprint(value)
+	}
+	if idText == "" {
+		return summary, nil
+	}
+	data, err := a.suiGet(ctx, s, "clients?id="+url.QueryEscape(idText))
+	if err != nil {
+		return nil, fmt.Errorf("save accepted, client detail verification unavailable: %w", err)
+	}
+	items := objectList(data, "clients")
+	if len(items) != 1 {
+		return nil, errors.New("save accepted, client detail was not returned afterwards")
+	}
+	return items[0], nil
+}
+
+func verifyNewClientSaved(expected, actual map[string]any) error {
+	// S-UI generates links and owns traffic/timestamp counters after a client is
+	// written. Those fields are deliberately excluded from equality checks.
+	serverOwned := map[string]bool{
+		"id": true, "links": true,
+		"up": true, "down": true, "totalUp": true, "totalDown": true,
+		"createdAt": true, "onlineAt": true, "nextReset": true,
+	}
+	for field, value := range expected {
+		if serverOwned[field] {
+			continue
+		}
+		actualValue, exists := actual[field]
+		if !exists {
+			return fmt.Errorf("save accepted, field %s was not returned by client detail", field)
+		}
+		if !reflect.DeepEqual(actualValue, value) {
+			return fmt.Errorf("save accepted, field %s did not match", field)
+		}
+	}
+	return nil
+}
+
+
 func collectTagReferences(value any, tag, path string, refs *[]string) {
 	if len(*refs) >= 4 {
 		return
@@ -858,6 +912,16 @@ func executeConfigSave(ctx context.Context, a *app, s server, c change, req prev
 	}
 	if actual == nil {
 		return backup, errors.New("save accepted, object not found afterwards")
+	}
+	if req.ConfigTarget == "clients" && req.ConfigMode == "new" {
+		detailed, err := clientDetailAfterSave(ctx, a, s, actual)
+		if err != nil {
+			return backup, err
+		}
+		if err := verifyNewClientSaved(expected, detailed); err != nil {
+			return backup, err
+		}
+		return backup, nil
 	}
 	var before map[string]any
 	_ = json.Unmarshal(c.Before, &before)
