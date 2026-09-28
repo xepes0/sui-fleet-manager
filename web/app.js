@@ -129,7 +129,7 @@ function buildClient(ids){
     else if(['trojan','hysteria2','anytls','shadowsocks'].includes(type))config[type]={name,password:password||crypto.randomUUID().replaceAll('-','')};
     else throw Error(`${type} 用户凭据暂未内置，请先在 S-UI 创建`);
   }
-  return {client:{enable:$('new-client-enable').checked,name,remark,volume:Math.round(volume*1073741824),expiry,config},inbounds_by_server:map};
+  return {client:{enable:$('new-client-enable').checked,name,remark,volume:Math.round(volume*1073741824),expiry,config,links:[]},inbounds_by_server:map};
 }
 function buildRoute(){const field=$('route-field').value,values=$('route-values').value.split(/[\n,，]+/).map(x=>x.trim()).filter(Boolean),action=$('route-action').value;if(!values.length)throw Error('请填写匹配值');const rule={action,[field]:field==='port'?values.map(x=>{const n=Number(x);if(!Number.isInteger(n)||n<1||n>65535)throw Error('目标端口无效');return n}):values};if(action==='route')rule.outbound=requiredValue('route-outbound','目标出站');return rule}
 function previewRow(c){

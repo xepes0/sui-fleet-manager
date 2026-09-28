@@ -451,6 +451,25 @@ func configNameKey(target string) string {
 	return "tag"
 }
 
+func normalizeNewClientTemplate(template map[string]any) error {
+	if template == nil {
+		return errors.New("client data is required")
+	}
+	if _, ok := template["links"]; !ok {
+		template["links"] = []any{}
+	} else if _, ok := template["links"].([]any); !ok {
+		return errors.New("client links must be a JSON array")
+	}
+	if _, ok := template["config"].(map[string]any); !ok {
+		return errors.New("client config must be a JSON object")
+	}
+	if _, ok := template["inbounds"].([]any); !ok {
+		return errors.New("client inbounds must be a JSON array")
+	}
+	return nil
+}
+
+
 func collectTagReferences(value any, tag, path string, refs *[]string) {
 	if len(*refs) >= 4 {
 		return
@@ -554,6 +573,12 @@ func previewConfigSave(ctx context.Context, a *app, s server, req previewRequest
 	list := objectList(data, req.ConfigTarget)
 	if req.ConfigMode == "new" {
 		template, _ := configPayload(req.Object)
+		if req.ConfigTarget == "clients" {
+			if err := normalizeNewClientTemplate(template); err != nil {
+				c.Error = err.Error()
+				return
+			}
+		}
 		if req.ConfigTarget == "inbounds" && req.ConfigSourceTag != "" {
 			var source map[string]any
 			for _, item := range list {
@@ -721,12 +746,23 @@ func executeConfigSave(ctx context.Context, a *app, s server, c change, req prev
 			return "", errors.New("configuration changed after preview; preview again")
 		}
 	} else if req.ConfigMode == "new" {
-		current := configCategory(data, req.ConfigTarget)
-		if current == nil {
-			current = []any{}
+		list := objectList(data, req.ConfigTarget)
+		var expected map[string]any
+		if err := json.Unmarshal(c.After, &expected); err != nil {
+			return "", err
 		}
-		if fingerprint(mustJSON(current)) != c.Fingerprint {
-			return "", errors.New("object list changed after preview; preview again")
+		key := configNameKey(req.ConfigTarget)
+		for _, item := range list {
+			if reflect.DeepEqual(item[key], expected[key]) {
+				return "", fmt.Errorf("%s already exists after preview; preview again", key)
+			}
+		}
+		if req.ConfigTarget == "inbounds" {
+			for _, item := range list {
+				if reflect.DeepEqual(item["listen"], expected["listen"]) && reflect.DeepEqual(item["listen_port"], expected["listen_port"]) {
+					return "", errors.New("listen address and port became occupied after preview; preview again")
+				}
+			}
 		}
 	} else {
 		item, err := configItem(objectList(data, req.ConfigTarget), req.ConfigIdentity)
