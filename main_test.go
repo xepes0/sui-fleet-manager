@@ -21,10 +21,14 @@ func testApp(t *testing.T) *app {
 	if err != nil {
 		t.Fatal(err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
 	_, err = db.Exec(`CREATE TABLE servers(id INTEGER PRIMARY KEY,name TEXT,region TEXT,sui_url TEXT,token_cipher TEXT,komari_uuid TEXT);
 		CREATE TABLE audit(id INTEGER PRIMARY KEY,at TEXT,action TEXT,server_id INTEGER,ok INTEGER,detail TEXT);`)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := initializeJobStore(db); err != nil {
 		t.Fatal(err)
 	}
 	return &app{db: db, key: bytes.Repeat([]byte{3}, 32), username: "admin", password: "long-test-password", dataDir: dir, client: &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, previews: map[string]preview{}}
@@ -55,6 +59,43 @@ func postJSON(t *testing.T, h http.HandlerFunc, path string, input any) *httptes
 	w := httptest.NewRecorder()
 	h(w, req)
 	return w
+}
+
+func executePreviewTest(t *testing.T, a *app, previewID string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": previewID})
+	if w.Code != http.StatusAccepted {
+		return w
+	}
+	var started jobSummary
+	if err := json.Unmarshal(w.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+started.ID, nil)
+		statusWriter := httptest.NewRecorder()
+		a.jobHandler(statusWriter, req)
+		if statusWriter.Code != http.StatusOK {
+			t.Fatalf("job status: %d %s", statusWriter.Code, statusWriter.Body.String())
+		}
+		var detail jobDetail
+		if err := json.Unmarshal(statusWriter.Body.Bytes(), &detail); err != nil {
+			t.Fatal(err)
+		}
+		if detail.Status == "completed" {
+			result := httptest.NewRecorder()
+			writeJSON(result, http.StatusOK, map[string]any{"results": detail.Results})
+			return result
+		}
+		if detail.Status == "interrupted" {
+			t.Fatalf("job interrupted: %+v", detail)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job did not complete: %+v", detail)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func TestPreviewBackupAndDisableClient(t *testing.T) {
@@ -106,7 +147,7 @@ func TestPreviewBackupAndDisableClient(t *testing.T) {
 	if len(p.Changes) != 1 || p.Changes[0].Error != "" {
 		t.Fatalf("unexpected preview: %+v", p)
 	}
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ok":true`) {
 		t.Fatalf("execute: %d %s", w.Code, w.Body.String())
 	}
@@ -121,7 +162,7 @@ func TestPreviewBackupAndDisableClient(t *testing.T) {
 	if err != nil || !bytes.HasPrefix(data, []byte("SQLite format 3\x00")) {
 		t.Fatalf("backup invalid: %v", err)
 	}
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if w.Code != 400 {
 		t.Fatalf("preview should be single-use: %d", w.Code)
 	}
@@ -148,7 +189,7 @@ func TestChangedClientStopsWrite(t *testing.T) {
 	var p preview
 	_ = json.Unmarshal(w.Body.Bytes(), &p)
 	client["remark"] = "changed"
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if !strings.Contains(w.Body.String(), "changed after preview") || backups != 0 {
 		t.Fatalf("stale preview did not stop write: %s", w.Body.String())
 	}
@@ -195,7 +236,7 @@ func TestInboundPatchPreviewAndBackup(t *testing.T) {
 	if len(p.Changes) != 1 || p.Changes[0].Error != "" {
 		t.Fatalf("preview: %+v", p)
 	}
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if w.Code != 200 || saves != 1 || backups != 1 || !strings.Contains(w.Body.String(), `"ok":true`) {
 		t.Fatalf("execute: %s, saves=%d backups=%d", w.Body.String(), saves, backups)
 	}

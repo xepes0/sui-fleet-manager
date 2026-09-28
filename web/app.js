@@ -5,6 +5,22 @@ const bytes = n => {if (!Number.isFinite(+n)) return '—'; let v=+n, u=['B','KB
 const pct = (a,b) => Number.isFinite(+a)&&a!=null&&Number.isFinite(+b)&&b>0 ? `${Math.round(100*a/b)}%` : '—';
 const date = d => new Date(d).toLocaleString('zh-CN');
 async function api(path, options={}) {const res=await fetch('/api/'+path,{...options,headers:{'Content-Type':'application/json',...options.headers},cache:'no-store'});let body;try{body=await res.json()}catch{throw Error(`HTTP ${res.status}`)}if(!res.ok)throw Error(body.error||`HTTP ${res.status}`);return body}
+const jobDone = status => status==='completed'||status==='interrupted';
+const wait = ms => new Promise(resolve=>setTimeout(resolve,ms));
+function jobProgressText(job){return `后台任务 ${job.completed||0} / ${job.total||0} · 成功 ${job.succeeded||0} · 失败 ${job.failed||0}`}
+async function executePreview(previewID,onProgress){
+  const started=await api('operations/execute',{method:'POST',body:JSON.stringify({preview_id:previewID})});
+  if(!started.job_id&&!started.id)return started;
+  const id=started.job_id||started.id;let job=started,deadline=Date.now()+20*60*1000;
+  while(!jobDone(job.status)){
+    if(onProgress)onProgress(job);
+    if(Date.now()>deadline)throw Error('任务仍在后台执行，可在“任务”页面继续查看');
+    await wait(750);job=await api('jobs/'+encodeURIComponent(id));
+  }
+  if(onProgress)onProgress(job);
+  if(job.status==='interrupted')throw Error('任务因控制器重启而中断，请重新预览后执行');
+  return {results:job.results||[],job};
+}
 function notice(text){$('notice').textContent=text;$('notice').classList.remove('hidden')}
 function clearNotice(){$('notice').classList.add('hidden')}
 function status(text,type=''){return `<span class="status ${type}">${esc(text)}</span>`}
@@ -159,13 +175,24 @@ async function doPreview(){
   if(!ids.length){notice('请先选择服务器');return}clearNotice();$('preview').disabled=true;
   try{const p=await api('operations/preview',{method:'POST',body:JSON.stringify(request)});state.preview=p;$('preview-box').classList.remove('hidden');$('preview-box').innerHTML=`<h3>变更预览 · ${p.changes.length} 台</h3><p class="hint">预览有效期至 ${esc(date(p.expires))}。执行前逐台核对配置；修改操作会检查预览时的版本。</p>${p.changes.map(previewRow).join('')}<div class="button-row"><button id="execute" class="primary" ${p.changes.every(x=>x.error)?'disabled':''}>执行可用项</button></div>`;$('execute').addEventListener('click',doExecute)}catch(e){notice('预览失败：'+e.message)}finally{$('preview').disabled=false}
 }
-async function doExecute(){const p=state.preview;if(!p)return;const count=p.changes.filter(x=>!x.error).length;if(!confirm(`将对 ${count} 台服务器执行 ${$('action').selectedOptions[0].text}。确认？`))return;$('execute').disabled=true;try{const data=await api('operations/execute',{method:'POST',body:JSON.stringify({preview_id:p.id})});$('result-box').classList.remove('hidden');$('result-box').innerHTML=`<h3>执行结果</h3>${data.results.map(x=>`<div class="preview-row"><strong>${esc(x.name||'#'+x.server_id)}</strong>${status(x.ok?'成功':'失败',x.ok?'ok':'bad')}<p class="${x.ok?'muted':'error'}">${esc(x.message)}</p>${x.backup?`<small>备份：<a href="/api/backups/${encodeURIComponent(x.backup)}">${esc(x.backup)}</a></small>`:''}</div>`).join('')}`;await refresh()}catch(e){notice('执行失败：'+e.message)}}
+async function doExecute(){
+  const p=state.preview;if(!p)return;const count=p.changes.filter(x=>!x.error).length;
+  if(!confirm(`将对 ${count} 台服务器执行 ${$('action').selectedOptions[0].text}。确认？`))return;
+  $('execute').disabled=true;$('result-box').classList.remove('hidden');
+  try{
+    const data=await executePreview(p.id,job=>{$('result-box').innerHTML=`<h3>执行中</h3><p class="hint">${esc(jobProgressText(job))}</p>`});
+    state.preview=null;
+    $('result-box').innerHTML=`<h3>执行结果</h3>${data.results.map(x=>`<div class="preview-row"><strong>${esc(x.name||'#'+x.server_id)}</strong>${status(x.ok?'成功':'失败',x.ok?'ok':'bad')}<p class="${x.ok?'muted':'error'}">${esc(x.message)}</p>${x.backup?`<small>备份：<a href="/api/backups/${encodeURIComponent(x.backup)}">${esc(x.backup)}</a></small>`:''}</div>`).join('')}`;
+    await refresh();
+  }catch(e){notice('执行失败：'+e.message)}
+}
 async function showBackups(){try{const rows=await api('backups');$('backup-list').innerHTML=rows.length?rows.map(x=>`<div class="audit-row"><a href="/api/backups/${encodeURIComponent(x.name)}">${esc(x.name)}</a><span class="muted"> · ${bytes(x.size)} · ${esc(date(x.created))}</span></div>`).join(''):'<div class="empty">尚无备份。可在批量操作中选择“备份数据库”。</div>'}catch(e){notice('备份列表加载失败：'+e.message)}}
 async function showAudit(){try{const rows=await api('audit');$('audit-list').innerHTML=rows.length?rows.map(x=>`<div class="audit-row">${status(x.ok?'成功':'失败',x.ok?'ok':'bad')} <strong>${esc(x.action)}</strong> · 服务器 #${esc(x.server_id)} <span class="muted">${esc(date(x.at))}</span><div class="muted">${esc(x.detail)}</div></div>`).join(''):'<div class="empty">尚无操作记录</div>'}catch(e){notice('记录加载失败：'+e.message)}}
-document.addEventListener('click',e=>{const edit=e.target.closest('[data-server-action]');if(edit){openSingleEditor(+(edit.dataset.serverId||state.detailID),edit.dataset.serverAction,edit.dataset.target||'');return}const associate=e.target.closest('[data-associate]');if(associate){const node=state.monitorNodes.find(x=>x.uuid===associate.dataset.associate);openServerForm(null);$('server-name').value=node?.name||'';$('server-region').value=node?.region||'';$('server-komari').value=associate.dataset.associate;return}const detail=e.target.closest('[data-open-detail]');if(detail){openDetail(detail.dataset.openDetail);return}if(!e.target.closest('[data-monitor-link]')){const card=e.target.closest('[data-detail]');if(card)openDetail(card.dataset.detail)}const tab=e.target.closest('[data-tab]');if(tab){document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===tab));document.querySelectorAll('.tab-panel').forEach(x=>x.classList.toggle('hidden',x.id!==tab.dataset.tab));if(tab.dataset.tab==='audit')showAudit();if(tab.dataset.tab==='backups')showBackups()}});
+async function showJobs(){try{const rows=await api('jobs');$('job-list').innerHTML=rows.length?rows.map(x=>{const running=x.status==='queued'||x.status==='running',kind=x.status==='completed'?(x.failed?'bad':'ok'):x.status==='interrupted'?'bad':'';const label=running?'执行中':x.status==='completed'?'已完成':x.status==='interrupted'?'已中断':x.status;return `<div class="audit-row">${status(label,kind)} <strong>${esc(x.action)}</strong> <span class="muted">· ${esc(x.completed)} / ${esc(x.total)} · 成功 ${esc(x.succeeded)} · 失败 ${esc(x.failed)} · ${esc(date(x.updated_at))}</span><div class="muted">任务 ${esc(x.id)}</div></div>`}).join(''):'<div class="empty">尚无批量任务</div>'}catch(e){notice('任务列表加载失败：'+e.message)}}
+document.addEventListener('click',e=>{const edit=e.target.closest('[data-server-action]');if(edit){openSingleEditor(+(edit.dataset.serverId||state.detailID),edit.dataset.serverAction,edit.dataset.target||'');return}const associate=e.target.closest('[data-associate]');if(associate){const node=state.monitorNodes.find(x=>x.uuid===associate.dataset.associate);openServerForm(null);$('server-name').value=node?.name||'';$('server-region').value=node?.region||'';$('server-komari').value=associate.dataset.associate;return}const detail=e.target.closest('[data-open-detail]');if(detail){openDetail(detail.dataset.openDetail);return}if(!e.target.closest('[data-monitor-link]')){const card=e.target.closest('[data-detail]');if(card)openDetail(card.dataset.detail)}const tab=e.target.closest('[data-tab]');if(tab){document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===tab));document.querySelectorAll('.tab-panel').forEach(x=>x.classList.toggle('hidden',x.id!==tab.dataset.tab));if(tab.dataset.tab==='audit')showAudit();if(tab.dataset.tab==='backups')showBackups();if(tab.dataset.tab==='jobs')showJobs()}});
 document.addEventListener('change',e=>{if(e.target.matches('[data-pick]')){const id=+e.target.dataset.pick;e.target.checked?state.selected.add(id):state.selected.delete(id);state.preview=null;$('preview-box').classList.add('hidden');loadFormDetails()}if(['object-mode','object-type','route-position','route-action','new-outbound-udp'].includes(e.target.id))formModeChanged();if(e.target.id==='object-tag')outboundPatchModeChanged()});
 document.addEventListener('keydown',e=>{const c=e.target.closest('[data-detail]');if(c&&e.target===c&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openDetail(c.dataset.detail)}});
-$('refresh').onclick=refresh;$('refresh-backups').onclick=showBackups;$('add').onclick=()=>openServerForm(null);$('server-form').onsubmit=saveServer;$('close-dialog').onclick=()=>$('server-dialog').close();$('delete-server').onclick=deleteServer;$('close-detail').onclick=()=>$('detail-dialog').close();$('configure-from-detail').onclick=()=>openSingleEditor(state.detailID,'inbound_patch');$('edit-from-detail').onclick=()=>{$('detail-dialog').close();openServerForm(state.servers.find(x=>x.id===state.detailID))};$('action').onchange=actionChanged;$('preview').onclick=doPreview;
+$('refresh').onclick=refresh;$('refresh-backups').onclick=showBackups;$('refresh-jobs').onclick=showJobs;$('add').onclick=()=>openServerForm(null);$('server-form').onsubmit=saveServer;$('close-dialog').onclick=()=>$('server-dialog').close();$('delete-server').onclick=deleteServer;$('close-detail').onclick=()=>$('detail-dialog').close();$('configure-from-detail').onclick=()=>openSingleEditor(state.detailID,'inbound_patch');$('edit-from-detail').onclick=()=>{$('detail-dialog').close();openServerForm(state.servers.find(x=>x.id===state.detailID))};$('action').onchange=actionChanged;$('preview').onclick=doPreview;
 $('clock').textContent=new Date().toLocaleDateString('zh-CN');loadNodes().then(refresh);
 actionChanged();
 setInterval(()=>{if(!document.hidden&&!$('server-dialog').open&&!$('detail-dialog').open&&!$('single-editor-dialog').open)refresh()},20000);

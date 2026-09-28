@@ -156,6 +156,9 @@ func main() {
 	if err := initializeTemplateStore(db); err != nil {
 		log.Fatal(err)
 	}
+	if err := initializeJobStore(db); err != nil {
+		log.Fatal(err)
+	}
 	_ = os.Chmod(filepath.Join(dataDir, "fleet.db"), 0600)
 	a := &app{db: db, key: key, username: username, password: password, komariURL: strings.TrimRight(os.Getenv("KOMARI_URL"), "/"), komariPublicURL: strings.TrimRight(os.Getenv("KOMARI_PUBLIC_URL"), "/"), komariKey: os.Getenv("KOMARI_API_KEY"), dataDir: dataDir, previews: make(map[string]preview), client: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	if a.komariURL != "" {
@@ -179,6 +182,8 @@ func main() {
 	mux.HandleFunc("/api/komari/ping-history", a.komariPingHistoryHandler)
 	mux.HandleFunc("/api/operations/preview", a.previewHandler)
 	mux.HandleFunc("/api/operations/execute", a.executeHandler)
+	mux.HandleFunc("/api/jobs", a.jobsHandler)
+	mux.HandleFunc("/api/jobs/", a.jobHandler)
 	mux.HandleFunc("/api/audit", a.auditHandler)
 	mux.HandleFunc("/api/backups", a.backupsHandler)
 	mux.HandleFunc("/api/backups/", a.backupDownloadHandler)
@@ -1079,15 +1084,15 @@ func (a *app) previewHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) executeHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "method not allowed", 405)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var input struct {
 		PreviewID string `json:"preview_id"`
 	}
 	if err := decode(r, &input); err != nil {
-		apiError(w, 400, err)
+		apiError(w, http.StatusBadRequest, err)
 		return
 	}
 	a.mu.Lock()
@@ -1097,143 +1102,26 @@ func (a *app) executeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.Unlock()
 	if !ok || time.Now().After(p.Expires) {
-		apiError(w, 400, errors.New("preview expired or already used"))
+		apiError(w, http.StatusBadRequest, errors.New("preview expired or already used"))
 		return
 	}
-	results := []outcome{}
-	for _, c := range p.Changes {
-		o := outcome{ServerID: c.ServerID, Name: c.ServerName}
-		if c.Error != "" {
-			o.Message = c.Error
-			results = append(results, o)
-			continue
+
+	if len(p.Changes) > 1 {
+		job, err := a.createJob(p)
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, err)
+			return
 		}
-		s, e := a.getServer(c.ServerID)
-		if e != nil {
-			o.Message = "server was removed"
-			results = append(results, o)
-			continue
-		}
-		if s.Name != c.ServerName || serverFingerprint(s) != c.ServerFingerprint {
-			o.Message = "server changed since preview"
-			results = append(results, o)
-			continue
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
-		switch c.Action {
-		case "backup":
-			o.Backup, e = a.backup(ctx, s)
-		case "restartSb":
-			e = a.suiPost(ctx, s, "restartSb", url.Values{})
-		case "inbound_patch":
-			obj, err := a.suiGet(ctx, s, "inbounds")
-			if err != nil {
-				e = err
-				break
-			}
-			inbound, err := inboundByTag(obj, p.Request.InboundTag)
-			if err != nil {
-				e = err
-				break
-			}
-			current, _ := json.Marshal(inbound)
-			if fingerprint(current) != c.Fingerprint {
-				e = errors.New("inbound changed after preview; preview again")
-				break
-			}
-			o.Backup, e = a.backup(ctx, s)
-			if e != nil {
-				break
-			}
-			e = a.suiPost(ctx, s, "save", url.Values{"object": {"inbounds"}, "action": {"edit"}, "data": {string(c.After)}})
-			if e == nil {
-				e = a.verifySaved(ctx, s, c, p.Request)
-			}
-		case "client_enable", "client_disable", "client_create":
-			if c.Action != "client_create" {
-				obj, err := a.suiGet(ctx, s, "clients")
-				if err != nil {
-					e = err
-					break
-				}
-				client, err := clientByName(obj, p.Request.ClientName)
-				if err != nil {
-					e = err
-					break
-				}
-				current, _ := json.Marshal(client)
-				if fingerprint(current) != c.Fingerprint {
-					e = errors.New("client changed after preview; preview again")
-					break
-				}
-			} else {
-				obj, err := a.suiGet(ctx, s, "clients")
-				if err != nil {
-					e = err
-					break
-				}
-				var newClient map[string]any
-				_ = json.Unmarshal(c.After, &newClient)
-				for _, client := range objectList(obj, "clients") {
-					if client["name"] == newClient["name"] {
-						e = errors.New("client created after preview; preview again")
-						break
-					}
-				}
-				if e != nil {
-					break
-				}
-				known, err := a.suiGet(ctx, s, "inbounds")
-				if err != nil {
-					e = err
-					break
-				}
-				available := map[int]bool{}
-				for _, inbound := range objectList(known, "inbounds") {
-					if id, ok := inbound["id"].(float64); ok {
-						available[int(id)] = true
-					}
-				}
-				for _, rawID := range newClient["inbounds"].([]any) {
-					if !available[int(rawID.(float64))] {
-						e = errors.New("inbound changed after preview; preview again")
-						break
-					}
-				}
-				if e != nil {
-					break
-				}
-			}
-			o.Backup, e = a.backup(ctx, s)
-			if e != nil {
-				break
-			}
-			action := "edit"
-			if c.Action == "client_create" {
-				action = "new"
-			}
-			e = a.suiPost(ctx, s, "save", url.Values{"object": {"clients"}, "action": {action}, "data": {string(c.After)}})
-			if e == nil {
-				e = a.verifySaved(ctx, s, c, p.Request)
-			}
-		case "inbound_create", "outbound_create", "outbound_patch", "route_rule_add", "route_rule_replace", "route_rule_delete":
-			o.Backup, e = executeExtended(ctx, a, s, c, p.Request)
-		case "config_save":
-			o.Backup, e = executeConfigSave(ctx, a, s, c, p.Request)
-		case "rule_set_apply":
-			o.Backup, e = executeRuleSetApplication(ctx, a, s, c)
-		}
-		cancel()
-		o.OK = e == nil
-		if e != nil {
-			o.Message = e.Error()
-		} else {
-			o.Message = "completed"
-		}
-		_, _ = a.db.Exec(`INSERT INTO audit(at,action,server_id,ok,detail) VALUES(?,?,?,?,?)`, time.Now().UTC().Format(time.RFC3339), c.Action, c.ServerID, o.OK, o.Message)
-		results = append(results, o)
+		go a.runJob(p, job.ID)
+		writeJSON(w, http.StatusAccepted, job)
+		return
 	}
-	writeJSON(w, 200, map[string]any{"results": results})
+
+	results := make([]outcome, 0, len(p.Changes))
+	for _, c := range p.Changes {
+		results = append(results, a.executeChange(r.Context(), p, c))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
 func (a *app) verifySaved(ctx context.Context, s server, c change, req previewRequest) error {

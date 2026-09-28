@@ -189,14 +189,14 @@ func TestFullConfigEditPreservesNestedFieldsAndRejectsStalePreview(t *testing.T)
 	var p preview
 	_ = json.Unmarshal(w.Body.Bytes(), &p)
 	inbound["listen_port"] = float64(9443)
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if !strings.Contains(w.Body.String(), "changed after preview") || backups != 0 || saves != 0 {
 		t.Fatalf("stale edit was not stopped: %s", w.Body.String())
 	}
 	inbound["listen_port"] = float64(443)
 	w = postJSON(t, a.previewHandler, "/api/operations/preview", req)
 	_ = json.Unmarshal(w.Body.Bytes(), &p)
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if !strings.Contains(w.Body.String(), `"ok":true`) || backups != 1 || saves != 1 {
 		t.Fatalf("full edit failed: %s", w.Body.String())
 	}
@@ -271,7 +271,7 @@ func TestPanelSettingsPatchAndEightCategoryRead(t *testing.T) {
 	}
 	var p preview
 	_ = json.Unmarshal(w.Body.Bytes(), &p)
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if !strings.Contains(w.Body.String(), `"ok":true`) || backup != 1 || save != 1 || settings["webPort"] != "2095" {
 		t.Fatalf("settings patch failed: %s", w.Body.String())
 	}
@@ -328,7 +328,7 @@ func TestBatchPatchUsesEachServersOwnObjectAndBacksUp(t *testing.T) {
 	if first["tls_id"] != float64(5) || second["tls_id"] != float64(8) || first["id"] != float64(2) || second["id"] != float64(9) {
 		t.Fatalf("server specific config was overwritten: %v %v", first, second)
 	}
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if strings.Count(w.Body.String(), `"ok":true`) != 2 {
 		t.Fatalf("batch execute: %s", w.Body.String())
 	}
@@ -433,7 +433,7 @@ func TestBatchNewClientUsesEachServersInboundTags(t *testing.T) {
 			t.Fatalf("wrong inbound mapping: %v", after)
 		}
 	}
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if strings.Count(w.Body.String(), `"ok":true`) != 2 {
 		t.Fatalf("batch creation failed: %s", w.Body.String())
 	}
@@ -501,7 +501,7 @@ func TestBatchTagRenameChecksReferencesAndConflicts(t *testing.T) {
 	if p.Changes[0].Error != "" {
 		t.Fatalf("safe rename rejected: %s", w.Body.String())
 	}
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if !strings.Contains(w.Body.String(), `"ok":true`) || backups != 1 || outbounds[0].(map[string]any)["tag"] != newTag {
 		t.Fatalf("safe rename failed: %s", w.Body.String())
 	}
