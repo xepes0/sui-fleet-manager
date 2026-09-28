@@ -184,3 +184,53 @@ test('new user accepts explicit inbound protocol password', () => {
   assert.equal(result.client.config.trojan.password, 'chosen-inbound-secret');
   assert.deepEqual(JSON.parse(JSON.stringify(result.inbounds_by_server)), {'1': [7]});
 });
+
+
+test('changing target servers keeps an in-progress batch edit draft when the source stays selected', async () => {
+  const helperSource = batchSource.slice(batchSource.indexOf('function bcResetPreview'), batchSource.indexOf('function bcSelect()'));
+  const elements = {
+    'batch-config-preview': {classList: {add() {}}},
+    'batch-config-result': {classList: {add() {}}},
+    'batch-config-servers': {innerHTML: ''},
+    'batch-config-content': {innerHTML: ''},
+  };
+  const draft = {tag: 'shared', server: 'edited.example.com'};
+  const ops = new Map([['["server"]', {op: 'set', path: ['server'], value: 'edited.example.com'}]]);
+  let rendered = 0;
+  const context = {
+    bc: {preview: null, data: {outbounds: []}, source: {id: 1}, mode: 'edit', tab: 'outbounds', form: draft, ops, publicAddrs: {}},
+    state: {selected: new Set([1, 2]), servers: [{id: 1, name: 'one', region: 'US'}, {id: 2, name: 'two', region: 'HK'}]},
+    $: id => elements[id],
+    esc: value => String(value),
+    structuredClone,
+    bcRender: () => { rendered++; },
+  };
+  vm.createContext(context);
+  vm.runInContext(helperSource, context);
+  await context.bcSelectionChanged();
+  assert.equal(context.bc.form.server, 'edited.example.com');
+  assert.equal(context.bc.ops.size, 1);
+  assert.equal(rendered, 1);
+});
+
+test('batch result can stay visible while preview state is reset after execution', () => {
+  const resetSource = batchSource.slice(batchSource.indexOf('function bcResetPreview'), batchSource.indexOf('function bcSelected()'));
+  const state = {previewHidden: false, resultHidden: false};
+  const context = {
+    bc: {preview: {id: 'x'}},
+    $: id => ({
+      classList: {
+        add(name) {
+          if (id === 'batch-config-preview' && name === 'hidden') state.previewHidden = true;
+          if (id === 'batch-config-result' && name === 'hidden') state.resultHidden = true;
+        },
+      },
+    }),
+  };
+  vm.createContext(context);
+  vm.runInContext(resetSource, context);
+  context.bcResetPreview(true);
+  assert.equal(context.bc.preview, null);
+  assert.equal(state.previewHidden, true);
+  assert.equal(state.resultHidden, false);
+});
