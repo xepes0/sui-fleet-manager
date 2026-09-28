@@ -58,7 +58,7 @@ func TestCreateObjectsBacksUpAndVerifies(t *testing.T) {
 			if len(p.Changes) != 1 || p.Changes[0].Error != "" {
 				t.Fatalf("preview: %+v", p)
 			}
-			w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+			w = executePreviewTest(t, a, p.ID)
 			if !strings.Contains(w.Body.String(), `"ok":true`) || backups != 1 || saves != 1 {
 				t.Fatalf("execute: %s backups=%d saves=%d", w.Body.String(), backups, saves)
 			}
@@ -179,14 +179,14 @@ func TestRouteRuleOrderingAndStaleConfig(t *testing.T) {
 		t.Fatalf("wrong order: %s", p.Changes[0].After)
 	}
 	config["dns"] = map[string]any{"strategy": "ipv4_only"}
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if !strings.Contains(w.Body.String(), "changed after preview") || backups != 0 || saves != 0 {
 		t.Fatalf("stale route config was written: %s", w.Body.String())
 	}
 	config["dns"] = map[string]any{"strategy": "prefer_ipv4"}
 	w = postJSON(t, a.previewHandler, "/api/operations/preview", request)
 	_ = json.Unmarshal(w.Body.Bytes(), &p)
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if !strings.Contains(w.Body.String(), `"ok":true`) || backups != 1 || saves != 1 {
 		t.Fatalf("route save: %s backups=%d saves=%d", w.Body.String(), backups, saves)
 	}
@@ -198,7 +198,7 @@ func TestRouteRuleOrderingAndStaleConfig(t *testing.T) {
 	deleteRequest := previewRequest{ServerIDs: []int64{id}, Action: "route_rule_delete", RouteIndex: &index}
 	w = postJSON(t, a.previewHandler, "/api/operations/preview", deleteRequest)
 	_ = json.Unmarshal(w.Body.Bytes(), &p)
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if !strings.Contains(w.Body.String(), `"ok":true`) || backups != 2 || saves != 2 {
 		t.Fatalf("route delete: %s", w.Body.String())
 	}
@@ -209,7 +209,7 @@ func TestRouteRuleOrderingAndStaleConfig(t *testing.T) {
 	replaceRequest := previewRequest{ServerIDs: []int64{id}, Action: "route_rule_replace", RouteIndex: &index, RouteRule: json.RawMessage(`{"domain_suffix":["replacement.example"],"outbound":"direct"}`)}
 	w = postJSON(t, a.previewHandler, "/api/operations/preview", replaceRequest)
 	_ = json.Unmarshal(w.Body.Bytes(), &p)
-	w = postJSON(t, a.executeHandler, "/api/operations/execute", map[string]string{"preview_id": p.ID})
+	w = executePreviewTest(t, a, p.ID)
 	if !strings.Contains(w.Body.String(), `"ok":true`) || backups != 3 || saves != 3 {
 		t.Fatalf("route replace: %s", w.Body.String())
 	}
