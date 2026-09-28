@@ -254,9 +254,10 @@ test('batch configuration exposes a route list with full JSON rules', () => {
   };
   vm.createContext(context);
   vm.runInContext(routeHelpers, context);
-  assert.ok(context.bcTabs.some(([key,label]) => key === 'routes' && label === '路由'));
-  assert.equal(context.bcRouteRuleFromText().outbound, 'direct');
-  assert.match(context.bcRouteLabel({action:'route',outbound:'direct',domain_suffix:['example.com']}, 2), /#3/);
+  const tabs = vm.runInContext('bcTabs', context);
+  assert.ok(tabs.some(([key,label]) => key === 'routes' && label === '路由'));
+  assert.equal(vm.runInContext('bcRouteRuleFromText()', context).outbound, 'direct');
+  assert.match(vm.runInContext('bcRouteLabel({action:"route",outbound:"direct",domain_suffix:["example.com"]}, 2)', context), /#3/);
   assert.match(batchSource, /action:'route_rule_replace'.*route_match:structuredClone\(bc\.original\)/s);
   assert.match(batchSource, /action:'route_rule_delete'.*route_match:structuredClone\(bc\.original\)/s);
 });
