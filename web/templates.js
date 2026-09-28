@@ -117,8 +117,9 @@ async function tlExecute(){
   if(!tl.preview)return;
   if(!confirm(`将模板套用到 ${tl.preview.changes.filter(c=>!c.error).length} 台服务器。每台会先备份，确认执行？`))return;
   try{
-    const result=await api('operations/execute',{method:'POST',body:JSON.stringify({preview_id:tl.preview.id})});tl.preview=null;
-    $('template-preview-result').innerHTML=`<h3>执行结果</h3>${result.results.map(r=>`<div class="template-preview-row"><strong>${esc(r.name)}</strong>${status(r.ok?'成功':'失败',r.ok?'ok':'bad')}<p>${esc(r.message)}</p>${r.backup?`<small>备份：${esc(r.backup)}</small>`:''}</div>`).join('')}`;
+    const box=$('template-preview-result');
+    const result=await executePreview(tl.preview.id,job=>{box.innerHTML=`<h3>执行中</h3><p class="hint">${esc(jobProgressText(job))}</p>`});tl.preview=null;
+    box.innerHTML=`<h3>执行结果</h3>${result.results.map(r=>`<div class="template-preview-row"><strong>${esc(r.name)}</strong>${status(r.ok?'成功':'失败',r.ok?'ok':'bad')}<p>${esc(r.message)}</p>${r.backup?`<small>备份：${esc(r.backup)}</small>`:''}</div>`).join('')}`;
   }catch(e){notice('执行失败：'+e.message)}
 }
 async function tlDelete(id){
