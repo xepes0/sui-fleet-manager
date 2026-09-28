@@ -232,3 +232,78 @@ func TestInvalidExtendedInputRejected(t *testing.T) {
 		}
 	}
 }
+
+
+func TestRouteRuleSemanticMatchWorksAcrossDifferentOrders(t *testing.T) {
+	a := testApp(t)
+	target := map[string]any{"domain_suffix": []any{"shared.example"}, "outbound": "direct"}
+	ids := []int64{}
+	orders := [][]any{
+		{map[string]any{"protocol": "dns", "action": "hijack-dns"}, target},
+		{target, map[string]any{"ip_cidr": []any{"10.0.0.0/8"}, "outbound": "direct"}},
+	}
+	for _, initial := range orders {
+		rules := append([]any{}, initial...)
+		panel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/app/apiv2/config":
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"config": map[string]any{"route": map[string]any{"rules": rules}}}})
+			case "/app/apiv2/outbounds":
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"outbounds": []any{map[string]any{"tag": "direct"}}}})
+			case "/app/apiv2/endpoints":
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"endpoints": []any{}}})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer panel.Close()
+		ids = append(ids, addTestServer(t, a, panel.URL))
+	}
+
+	match, _ := json.Marshal(target)
+	replacement := json.RawMessage(`{"domain_suffix":["replacement.example"],"outbound":"direct"}`)
+	req := previewRequest{
+		ServerIDs: ids,
+		Action: "route_rule_replace",
+		RouteRule: replacement,
+		RouteMatch: match,
+	}
+	w := postJSON(t, a.previewHandler, "/api/operations/preview", req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview: %d %s", w.Code, w.Body.String())
+	}
+	var p preview
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Changes) != 2 {
+		t.Fatalf("expected 2 changes, got %d", len(p.Changes))
+	}
+	for i, change := range p.Changes {
+		if change.Error != "" {
+			t.Fatalf("server %d preview failed: %s", i, change.Error)
+		}
+		var after []map[string]any
+		if err := json.Unmarshal(change.After, &after); err != nil {
+			t.Fatal(err)
+		}
+		expectedIndex := []int{1, 0}[i]
+		if after[expectedIndex]["domain_suffix"].([]any)[0] != "replacement.example" {
+			t.Fatalf("server %d replaced wrong route: %s", i, change.After)
+		}
+	}
+}
+
+func TestRouteRuleSemanticMatchRejectsMissingOrDuplicateRule(t *testing.T) {
+	target := json.RawMessage(`{"domain_suffix":["shared.example"],"outbound":"direct"}`)
+	if _, err := matchedRouteIndex([]any{map[string]any{"outbound": "direct"}}, target); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected not found error, got %v", err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(target, &object); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := matchedRouteIndex([]any{object, cloneMap(object)}, target); err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("expected duplicate error, got %v", err)
+	}
+}
