@@ -1,10 +1,32 @@
-const bc={tab:'inbounds',mode:'edit',source:null,data:null,index:0,form:null,original:null,ops:new Map(),preview:null,version:0,tlsName:'none',publicAddrs:{},inboundCopy:false,sourceTag:'',copyOriginal:null,inboundOptions:{},clientTagsByServer:{},inboundLoading:false,inboundVersion:0};
+const bc={tab:'inbounds',mode:'edit',source:null,data:null,index:0,form:null,original:null,ops:new Map(),preview:null,version:0,tlsName:'none',publicAddrs:{},inboundCopy:false,sourceTag:'',copyOriginal:null,inboundOptions:{},clientTagsByServer:{},inboundLoading:false,inboundVersion:0,routeText:''};
 const bcKey=path=>JSON.stringify(path);
 const bcPath=path=>encodeURIComponent(JSON.stringify(path));
 const bcRead=path=>path.reduce((value,key)=>value?.[key],bc.form);
 const bcParent=path=>path.slice(0,-1).reduce((value,key)=>value?.[key],bc.form);
 const bcItems=()=>Array.isArray(bc.data?.[bc.tab])?bc.data[bc.tab]:[];
 const bcIdentity=item=>`${fcNames.name&&['clients','tls'].includes(bc.tab)?'name':'tag'}:${['clients','tls'].includes(bc.tab)?item.name:item.tag}`;
+const bcTabs=[...fcTabs.slice(0,3),['routes','路由'],...fcTabs.slice(3)];
+function bcRouteLabel(rule,index){
+  const action=String(rule?.action||'route'),outbound=String(rule?.outbound||'');
+  const match=Object.entries(rule||{}).find(([key])=>!['action','outbound'].includes(key));
+  const raw=match?(Array.isArray(match[1])?match[1].slice(0,2).join(', '):String(match[1])):'无匹配条件';
+  const detail=match?`${match[0]}: ${raw.length>46?raw.slice(0,46)+'…':raw}`:raw;
+  return `#${index+1} · ${action}${outbound?' → '+outbound:''} · ${detail}`;
+}
+function bcObjectLabel(item,index){
+  if(bc.tab==='routes')return bcRouteLabel(item,index);
+  return `${item.name||item.tag||'#'+item.id} · ${item.type||''}`;
+}
+function bcRouteRuleFromText(){
+  let rule;
+  try{rule=JSON.parse(bc.routeText)}catch{throw Error('路由规则 JSON 格式无效')}
+  if(!rule||Array.isArray(rule)||typeof rule!=='object'||!Object.keys(rule).length)throw Error('路由规则必须是非空 JSON 对象');
+  if(!rule.action&&!rule.outbound)throw Error('路由规则至少需要 action 或 outbound');
+  return rule;
+}
+function bcRouteFields(){
+  return `<div class="batch-config-guided"><section class="batch-config-section"><h4>路由规则 JSON</h4><p class="hint">支持 S-UI / sing-box 的完整规则字段。批量修改和删除会按“整条原规则内容”在每台服务器匹配，不按序号盲删，避免各机器规则顺序不同导致误操作。</p><textarea id="bc-route-json" rows="12" spellcheck="false">${esc(bc.routeText)}</textarea></section></div>`;
+}
 const bcDefault=type=>type==='text'?'':type==='number'?0:type==='boolean'?false:type==='list'?[]:{};
 const bcOutboundTypes=[['socks','SOCKS'],['http','HTTP'],['vless','VLESS'],['trojan','Trojan'],['hysteria2','Hysteria2'],['anytls','AnyTLS'],['shadowsocks','Shadowsocks'],['direct','直连'],['block','阻断']];
 const bcInboundTypes=[['vless','VLESS'],['vmess','VMess'],['trojan','Trojan'],['hysteria2','Hysteria2'],['tuic','TUIC'],['anytls','AnyTLS'],['shadowsocks','Shadowsocks'],['mixed','Mixed'],['socks','SOCKS'],['http','HTTP']];
@@ -137,7 +159,7 @@ async function bcLoad(options={}){
     tab:bc.tab,form:structuredClone(bc.form),tlsName:bc.tlsName,
     publicAddrs:structuredClone(bc.publicAddrs),inboundCopy:bc.inboundCopy,
     sourceTag:bc.sourceTag,copyOriginal:bc.copyOriginal?structuredClone(bc.copyOriginal):null,
-    clientTagsByServer:structuredClone(bc.clientTagsByServer)
+    clientTagsByServer:structuredClone(bc.clientTagsByServer),routeText:bc.routeText
   }:null;
   bcResetPreview(keepResult);bc.version++;const version=bc.version,ids=bcSelected();bcServerList();
   if(!ids.length){bc.data=null;bc.source=null;$('batch-config-content').innerHTML='<div class="empty">先勾选目标服务器。</div>';return}
@@ -147,7 +169,7 @@ async function bcLoad(options={}){
     if(draft){
       bc.tab=draft.tab;bc.mode='new';bc.original=null;bc.ops.clear();bc.form=draft.form;bc.tlsName=draft.tlsName;
       bc.publicAddrs=draft.publicAddrs;bc.inboundCopy=draft.inboundCopy;bc.sourceTag=draft.sourceTag;bc.copyOriginal=draft.copyOriginal;
-      bc.clientTagsByServer=draft.clientTagsByServer;bc.inboundOptions={};bc.inboundLoading=false;bcRender();
+      bc.clientTagsByServer=draft.clientTagsByServer;bc.routeText=draft.routeText||JSON.stringify(bc.form,null,2);bc.inboundOptions={};bc.inboundLoading=false;bcRender();
       if(bc.tab==='clients')bcLoadClientInboundOptions();
     }else{bc.mode='edit';bcSelect()}
   }catch(e){if(version===bc.version)$('batch-config-content').innerHTML=`<p class="error">读取失败：${esc(e.message)}</p>`}
@@ -168,13 +190,13 @@ async function bcSelectionChanged(){
 }
 function bcSelect(){
   bcResetPreview();bc.ops.clear();bc.inboundVersion++;bc.clientTagsByServer={};bc.inboundOptions={};bc.inboundLoading=false;const singleton=['config','settings'].includes(bc.tab),item=singleton?bc.data?.[bc.tab]:bcItems()[bc.index];bc.original=item==null?null:structuredClone(item);bc.form=item==null?null:structuredClone(item);
-  bc.tlsName=bcTLSList().find(t=>t.id===bc.form?.tls_id)?.name||'none';bc.publicAddrs={};bc.inboundCopy=false;bc.sourceTag='';bc.copyOriginal=null;bcRender();
+  bc.tlsName=bcTLSList().find(t=>t.id===bc.form?.tls_id)?.name||'none';bc.publicAddrs={};bc.inboundCopy=false;bc.sourceTag='';bc.copyOriginal=null;bc.routeText=bc.tab==='routes'&&bc.form?JSON.stringify(bc.form,null,2):'';bcRender();
 }
 function bcNew(){
   if(['config','settings'].includes(bc.tab))return;
   bc.mode='new';bc.ops.clear();bcResetPreview();bc.original=null;bc.inboundVersion++;bc.clientTagsByServer={};bc.inboundOptions={};bc.inboundLoading=false;
-  bc.form=bc.tab==='clients'?bcClientForm():bc.tab==='tls'?{name:'',server:{enabled:true},client:{enabled:true}}:bc.tab==='inbounds'?bcInboundForm('vless'):bc.tab==='outbounds'?bcOutboundForm('socks'):bc.tab==='endpoints'?{tag:'',type:'wireguard'}:{tag:'',type:'derp'};
-  bc.tlsName='none';bc.inboundCopy=false;bc.sourceTag='';bc.copyOriginal=null;bc.publicAddrs=Object.fromEntries(bcSelected().map(id=>[id,{server:'',port:bc.form.listen_port||443}]));
+  bc.form=bc.tab==='clients'?bcClientForm():bc.tab==='tls'?{name:'',server:{enabled:true},client:{enabled:true}}:bc.tab==='inbounds'?bcInboundForm('vless'):bc.tab==='outbounds'?bcOutboundForm('socks'):bc.tab==='routes'?{action:'route',outbound:''}:bc.tab==='endpoints'?{tag:'',type:'wireguard'}:{tag:'',type:'derp'};
+  bc.tlsName='none';bc.inboundCopy=false;bc.sourceTag='';bc.copyOriginal=null;bc.routeText=bc.tab==='routes'?JSON.stringify(bc.form,null,2):'';bc.publicAddrs=Object.fromEntries(bcSelected().map(id=>[id,{server:'',port:bc.form.listen_port||443}]));
   bcRender();if(bc.tab==='clients')bcLoadClientInboundOptions();
 }
 async function bcLoadClientInboundOptions(){
@@ -238,17 +260,18 @@ function bcGuidedEditFields(){
   return `<div class="batch-config-guided">${common}${bc.tab==='inbounds'?bcEditPublicFields():''}${other.length?`<details class="batch-config-extra"><summary>其他配置字段 · ${other.length} 项</summary><div class="batch-config-fields">${other.map(key=>bcField(key,bc.form[key],[key],0)).join('')}</div></details>`:''}${bc.tab==='clients'?'<p class="hint">用量和时间统计属于运行数据，不在批量配置中修改。</p>':''}</div>`;
 }
 function bcRender(){
-  $('batch-config-tabs').innerHTML=fcTabs.map(([key,label])=>`<button data-bc-tab="${key}" class="${bc.tab===key?'active':''}" aria-selected="${bc.tab===key}">${label}</button>`).join('');
+  $('batch-config-tabs').innerHTML=bcTabs.map(([key,label])=>`<button data-bc-tab="${key}" class="${bc.tab===key?'active':''}" aria-selected="${bc.tab===key}">${label}</button>`).join('');
   const box=$('batch-config-content');if(!bc.data){box.innerHTML='<p class="muted">请选择服务器。</p>';return}
   if(bc.data.errors?.[bc.tab]){box.innerHTML=`<p class="error">${esc(bc.data.errors[bc.tab])}</p>`;return}
-  const singleton=['config','settings'].includes(bc.tab),items=bcItems(),name=fcTabs.find(x=>x[0]===bc.tab)?.[1];
-  const selector=singleton?'':`<div class="batch-config-object-bar"><label>配置对象<select id="batch-config-object">${items.map((item,i)=>`<option value="${i}" ${i===bc.index?'selected':''}>${esc(item.name||item.tag||'#'+item.id)} · ${esc(item.type||'')}</option>`).join('')}</select></label><button id="batch-config-new" class="secondary">＋ 新增${esc(name)}</button></div>`;
+  const singleton=['config','settings'].includes(bc.tab),items=bcItems(),name=bcTabs.find(x=>x[0]===bc.tab)?.[1];
+  const selector=singleton?'':`<div class="batch-config-object-bar"><label>配置对象<select id="batch-config-object">${items.map((item,i)=>`<option value="${i}" ${i===bc.index?'selected':''}>${esc(bcObjectLabel(item,i))}</option>`).join('')}</select></label><button id="batch-config-new" class="secondary">＋ 新增${esc(name)}${bc.tab==='routes'?'规则':''}</button></div>`;
   const mode=singleton?'':`<div class="batch-config-mode"><button data-bc-mode="edit" class="${bc.mode==='edit'?'active':''}">修改字段</button><button data-bc-mode="new" class="${bc.mode==='new'?'active':''}">新增对象</button><button data-bc-mode="del" class="${bc.mode==='del'?'active':''}">删除对象</button></div>`;
   if(!bc.form&&bc.mode!=='new'){box.innerHTML=selector+mode+'<div class="empty">此类还没有对象。点击新增开始配置。</div>';return}
-  const intro=bc.mode==='new'&&bc.tab==='inbounds'?'入站负责监听和订阅公开地址；用户密码或 UUID 在“用户”里设置。':bc.mode==='new'&&bc.tab==='clients'?'先选择可用入站，再填写对应协议凭据；预览会逐台匹配入站。':bc.mode==='new'?'将用下面的表单在每台服务器新建对象。':bc.mode==='del'?'将按名称或 Tag 在每台服务器定位对象并分别预览删除。':bc.tab==='settings'?'勾选要同步的设置值；未勾选的设置保持各服务器原值。':['inbounds','outbounds','endpoints','services'].includes(bc.tab)?'勾选要批量修改的字段；修改 Tag 时会逐台检查重名和配置引用。':'勾选要批量修改的字段；未勾选的字段保持各服务器原值。';
+  const intro=bc.tab==='routes'?(bc.mode==='new'?'将在每台服务器的路由列表末尾追加此规则。':bc.mode==='del'?'会按完整原规则内容逐台匹配并预览删除；顺序不同也不会误删。':'会按完整原规则内容逐台匹配，再用下面的新规则替换。'):bc.mode==='new'&&bc.tab==='inbounds'?'入站负责监听和订阅公开地址；用户密码或 UUID 在“用户”里设置。':bc.mode==='new'&&bc.tab==='clients'?'先选择可用入站，再填写对应协议凭据；预览会逐台匹配入站。':bc.mode==='new'?'将用下面的表单在每台服务器新建对象。':bc.mode==='del'?'将按名称或 Tag 在每台服务器定位对象并分别预览删除。':bc.tab==='settings'?'勾选要同步的设置值；未勾选的设置保持各服务器原值。':['inbounds','outbounds','endpoints','services'].includes(bc.tab)?'勾选要批量修改的字段；修改 Tag 时会逐台检查重名和配置引用。':'勾选要批量修改的字段；未勾选的字段保持各服务器原值。';
   const shortcut=bc.mode==='new'&&bc.tab==='inbounds'?'<button id="batch-config-client-shortcut" class="secondary" type="button">下一步：创建用户与凭据</button>':'';
-  const fields=bc.mode==='del'?`<div class="batch-config-danger">将删除 ${esc(bc.original?.name||bc.original?.tag||'对象')}。预览会逐台检查。</div>`:bc.mode==='new'&&bc.tab==='clients'?bcClientNewFields():bc.mode==='new'&&bc.tab==='inbounds'?bcInboundNewFields():bc.mode==='edit'&&['clients','inbounds'].includes(bc.tab)?bcGuidedEditFields():bcFields(bc.form,[],0);
-  box.innerHTML=`${selector}${mode}<p class="hint">参考 ${esc(bc.source?.name||'第一台服务器')} 的当前配置。${intro}</p>${shortcut}${fields}<div class="batch-config-actions"><span id="batch-config-count">${bc.mode==='new'?'新建对象':bc.ops.size+' 项字段变更'}</span><button id="batch-config-review" class="primary">生成逐台预览</button></div>`;
+  const fields=bc.mode==='del'?`<div class="batch-config-danger">将删除 ${bc.tab==='routes'?esc(bcRouteLabel(bc.original,bc.index)):esc(bc.original?.name||bc.original?.tag||'对象')}。预览会逐台检查。</div>`:bc.tab==='routes'?bcRouteFields():bc.mode==='new'&&bc.tab==='clients'?bcClientNewFields():bc.mode==='new'&&bc.tab==='inbounds'?bcInboundNewFields():bc.mode==='edit'&&['clients','inbounds'].includes(bc.tab)?bcGuidedEditFields():bcFields(bc.form,[],0);
+  const countText=bc.tab==='routes'?(bc.mode==='new'?'新增路由规则':bc.mode==='del'?'删除路由规则':'替换整条路由规则'):(bc.mode==='new'?'新建对象':bc.ops.size+' 项字段变更');
+  box.innerHTML=`${selector}${mode}<p class="hint">参考 ${esc(bc.source?.name||'第一台服务器')} 的当前配置。${intro}</p>${shortcut}${fields}<div class="batch-config-actions"><span id="batch-config-count">${countText}</span><button id="batch-config-review" class="primary">生成逐台预览</button></div>`;
 }
 function bcFields(object,path,depth){
   if(depth>10)return '<p class="hint">嵌套较深，请在单机完整配置中编辑。</p>';
@@ -282,6 +305,14 @@ function bcMark(path,op='set'){
 }
 function bcRequest(){
   const ids=bcSelected();if(!ids.length)throw Error('请先选择服务器');
+  if(bc.tab==='routes'){
+    if(bc.mode==='new')return {server_ids:ids,action:'route_rule_add',route_rule:bcRouteRuleFromText(),route_position:'last'};
+    if(!bc.original)throw Error('请选择路由规则');
+    if(bc.mode==='del')return {server_ids:ids,action:'route_rule_delete',route_match:structuredClone(bc.original)};
+    const rule=bcRouteRuleFromText();
+    if(JSON.stringify(rule)===JSON.stringify(bc.original))throw Error('请先修改路由规则');
+    return {server_ids:ids,action:'route_rule_replace',route_rule:rule,route_match:structuredClone(bc.original)};
+  }
   const singleton=['config','settings'].includes(bc.tab),mode=singleton?(bc.tab==='settings'?'set':'patch'):bc.mode==='edit'?'patch':bc.mode;
   const request={server_ids:ids,action:'config_save',config_target:bc.tab,config_mode:mode};
   if(!singleton&&bc.mode!=='new')request.config_identity=bcIdentity(bc.original);
@@ -357,6 +388,7 @@ document.addEventListener('change',event=>{
   if(event.target.matches('[data-bc-value]')){const path=JSON.parse(decodeURIComponent(event.target.dataset.bcValue)),old=bcRead(path);if(event.target.type==='number'&&event.target.value===''){bcError('数字字段不能留空');return}const value=typeof old==='number'?Number(event.target.value):typeof old==='boolean'?event.target.value==='true':event.target.value;if(bc.mode==='new'&&bc.tab==='outbounds'&&path.length===1&&path[0]==='type'){bc.form=bcOutboundForm(value,bc.form);bcResetPreview();bcRender();return}if(bc.mode==='new'&&bc.tab==='inbounds'&&path.length===1&&path[0]==='type'){bc.form=bcInboundForm(value,bc.form);bc.tlsName='none';bcResetPreview();bcRender();return}bcParent(path)[path.at(-1)]=value;if(bc.mode==='new'&&bc.tab==='clients'&&path[0]==='autoReset'){bcResetPreview();bcRender();return}if(bc.mode==='edit'){bcMark(path);const checkbox=event.target.closest('.batch-config-field')?.querySelector('[data-bc-check]');if(checkbox)checkbox.checked=true}return}
 });
 document.addEventListener('input',event=>{
+  if(event.target.id==='bc-route-json'){bc.routeText=event.target.value;bcResetPreview();return}
   if(event.target.matches('[data-bc-public-server],[data-bc-public-port]')){const id=event.target.dataset.bcPublicServer||event.target.dataset.bcPublicPort;bc.publicAddrs[id]??={server:'',port:bc.form.listen_port};if(event.target.dataset.bcPublicServer)bc.publicAddrs[id].server=event.target.value.trim();else bc.publicAddrs[id].port=Number(event.target.value);bcResetPreview();return}
   if(event.target.matches('[data-bc-volume],[data-bc-expiry]')){const key=event.target.matches('[data-bc-volume]')?'volume':'expiry',value=key==='volume'?Math.round(Number(event.target.value)*bcGiB):event.target.value?Math.floor(Date.parse(event.target.value+'T23:59:59Z')/1000):0;if(!Number.isFinite(value))return;bc.form[key]=value;if(bc.mode==='edit')bcMark([key]);else bcResetPreview();return}
   if(!event.target.matches('[data-bc-value]')||event.target.tagName==='SELECT')return;const path=JSON.parse(decodeURIComponent(event.target.dataset.bcValue)),old=bcRead(path);if(event.target.type==='number'&&event.target.value==='')return;bcParent(path)[path.at(-1)]=typeof old==='number'?Number(event.target.value):event.target.value;if(bc.mode==='edit'){bcMark(path);const checkbox=event.target.closest('.batch-config-field')?.querySelector('[data-bc-check]');if(checkbox)checkbox.checked=true}

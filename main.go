@@ -76,6 +76,7 @@ type previewRequest struct {
 	ObjectTag              string                      `json:"object_tag"`
 	ObjectPatch            json.RawMessage             `json:"object_patch"`
 	RouteRule              json.RawMessage             `json:"route_rule"`
+	RouteMatch             json.RawMessage             `json:"route_match"`
 	RouteIndex             *int                        `json:"route_index"`
 	RoutePosition          string                      `json:"route_position"`
 	ConfigTarget           string                      `json:"config_target"`

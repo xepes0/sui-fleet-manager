@@ -244,3 +244,33 @@ test('delete mode keeps the chosen configuration object selected', () => {
     /if\(event\.target\.id==='batch-config-object'\)\{bc\.index=Number\(event\.target\.value\);bcSelect\(\);return\}/
   );
 });
+
+
+test('batch configuration exposes a route list with full JSON rules', () => {
+  const routeHelpers = batchSource.slice(batchSource.indexOf('const bcTabs='), batchSource.indexOf('const bcDefault='));
+  const context = {
+    fcTabs: [['clients','用户'],['inbounds','入站'],['outbounds','出站'],['endpoints','端点']],
+    bc: {tab:'routes',routeText:'{"action":"route","outbound":"direct","domain_suffix":["example.com"]}'},
+  };
+  vm.createContext(context);
+  vm.runInContext(routeHelpers, context);
+  const tabs = vm.runInContext('bcTabs', context);
+  assert.ok(tabs.some(([key,label]) => key === 'routes' && label === '路由'));
+  assert.equal(vm.runInContext('bcRouteRuleFromText()', context).outbound, 'direct');
+  assert.match(vm.runInContext('bcRouteLabel({action:"route",outbound:"direct",domain_suffix:["example.com"]}, 2)', context), /#3/);
+  assert.match(batchSource, /action:'route_rule_replace'.*route_match:structuredClone\(bc\.original\)/s);
+  assert.match(batchSource, /action:'route_rule_delete'.*route_match:structuredClone\(bc\.original\)/s);
+});
+
+test('batch route edits reject invalid or empty JSON rules', () => {
+  const routeHelpers = batchSource.slice(batchSource.indexOf('const bcTabs='), batchSource.indexOf('const bcDefault='));
+  const context = {
+    fcTabs: [['clients','用户'],['inbounds','入站'],['outbounds','出站']],
+    bc: {tab:'routes',routeText:'[]'},
+  };
+  vm.createContext(context);
+  vm.runInContext(routeHelpers, context);
+  assert.throws(() => context.bcRouteRuleFromText(), /非空 JSON 对象/);
+  context.bc.routeText = '{"domain_suffix":["example.com"]}';
+  assert.throws(() => context.bcRouteRuleFromText(), /action 或 outbound/);
+});
