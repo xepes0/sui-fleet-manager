@@ -126,16 +126,45 @@ function bcPrepareNewObject(tab,form){
   if(object.tls&&!object.tls.server_name)delete object.tls.server_name;
   return object;
 }
-function bcResetPreview(){bc.preview=null;$('batch-config-preview').classList.add('hidden');$('batch-config-result').classList.add('hidden')}
+function bcResetPreview(keepResult=false){bc.preview=null;$('batch-config-preview').classList.add('hidden');if(!keepResult)$('batch-config-result').classList.add('hidden')}
 function bcSelected(){return [...state.selected]}
 function bcServerList(){
   $('batch-config-servers').innerHTML=state.servers.map(s=>`<label class="batch-config-server"><input type="checkbox" data-bc-server="${s.id}" ${state.selected.has(s.id)?'checked':''}><span><b>${esc(s.name)}</b><small>${esc(s.region||'未分组')}</small></span></label>`).join('')||'<p class="muted">先添加 S-UI 面板。</p>';
 }
-async function bcLoad(){
-  bcResetPreview();bc.version++;const version=bc.version,ids=bcSelected();bcServerList();
-  if(!ids.length){bc.data=null;$('batch-config-content').innerHTML='<div class="empty">先勾选目标服务器。</div>';return}
+async function bcLoad(options={}){
+  const {keepResult=false,preserveNewDraft=false}=options;
+  const draft=preserveNewDraft&&bc.mode==='new'&&bc.form?{
+    tab:bc.tab,form:structuredClone(bc.form),tlsName:bc.tlsName,
+    publicAddrs:structuredClone(bc.publicAddrs),inboundCopy:bc.inboundCopy,
+    sourceTag:bc.sourceTag,copyOriginal:bc.copyOriginal?structuredClone(bc.copyOriginal):null,
+    clientTagsByServer:structuredClone(bc.clientTagsByServer)
+  }:null;
+  bcResetPreview(keepResult);bc.version++;const version=bc.version,ids=bcSelected();bcServerList();
+  if(!ids.length){bc.data=null;bc.source=null;$('batch-config-content').innerHTML='<div class="empty">先勾选目标服务器。</div>';return}
   const source=state.servers.find(s=>s.id===ids[0]);bc.source=source;$('batch-config-content').innerHTML=`<p class="muted">正在读取 ${esc(source?.name||'服务器')} 的配置…</p>`;
-  try{const data=await api(`servers/${ids[0]}/configuration`);if(version!==bc.version)return;bc.data=data;bc.index=0;bc.mode='edit';bcSelect();}catch(e){if(version===bc.version)$('batch-config-content').innerHTML=`<p class="error">读取失败：${esc(e.message)}</p>`}
+  try{
+    const data=await api(`servers/${ids[0]}/configuration`);if(version!==bc.version)return;bc.data=data;bc.index=0;
+    if(draft){
+      bc.tab=draft.tab;bc.mode='new';bc.original=null;bc.ops.clear();bc.form=draft.form;bc.tlsName=draft.tlsName;
+      bc.publicAddrs=draft.publicAddrs;bc.inboundCopy=draft.inboundCopy;bc.sourceTag=draft.sourceTag;bc.copyOriginal=draft.copyOriginal;
+      bc.clientTagsByServer=draft.clientTagsByServer;bc.inboundOptions={};bc.inboundLoading=false;bcRender();
+      if(bc.tab==='clients')bcLoadClientInboundOptions();
+    }else{bc.mode='edit';bcSelect()}
+  }catch(e){if(version===bc.version)$('batch-config-content').innerHTML=`<p class="error">读取失败：${esc(e.message)}</p>`}
+}
+function bcSyncPublicAddrsForSelection(){
+  const selected=new Set(bcSelected().map(String));
+  for(const id of Object.keys(bc.publicAddrs))if(!selected.has(id))delete bc.publicAddrs[id];
+  for(const id of selected)if(!bc.publicAddrs[id])bc.publicAddrs[id]={server:'',port:bc.form?.listen_port||443};
+}
+async function bcSelectionChanged(){
+  bcResetPreview();bcServerList();const ids=bcSelected();
+  if(!ids.length){bc.data=null;bc.source=null;$('batch-config-content').innerHTML='<div class="empty">先勾选目标服务器。</div>';return}
+  const sourceStillSelected=bc.data&&bc.source&&ids.includes(Number(bc.source.id));
+  if(!sourceStillSelected){await bcLoad({preserveNewDraft:true});return}
+  if(bc.mode==='new'&&bc.tab==='clients'){await bcLoadClientInboundOptions();return}
+  if(bc.mode==='new'&&bc.tab==='inbounds')bcSyncPublicAddrsForSelection();
+  bcRender();
 }
 function bcSelect(){
   bcResetPreview();bc.ops.clear();bc.inboundVersion++;bc.clientTagsByServer={};bc.inboundOptions={};bc.inboundLoading=false;const singleton=['config','settings'].includes(bc.tab),item=singleton?bc.data?.[bc.tab]:bcItems()[bc.index];bc.original=item==null?null:structuredClone(item);bc.form=item==null?null:structuredClone(item);
@@ -292,8 +321,9 @@ async function bcExecute(){
   try{
     const response=await executePreview(bc.preview.id,job=>{box.innerHTML=`<h3>执行中</h3><p class="hint">${esc(jobProgressText(job))}</p>`});
     bc.preview=null;
-    const resultHTML=`<h3>执行结果</h3>${response.results.map(r=>`<div class="batch-config-preview-row"><strong>${esc(r.name||'#'+r.server_id)}</strong>${status(r.ok?'成功':'需核对',r.ok?'ok':'bad')}<p class="${r.ok?'muted':'error'}">${esc(r.message)}</p>${r.backup?`<small>备份：<a href="/api/backups/${encodeURIComponent(r.backup)}">${esc(r.backup)}</a></small>`:''}</div>`).join('')}`;
-    await refresh();await bcLoad();box.innerHTML=resultHTML;
+    const succeeded=response.results.filter(r=>r.ok).length,failed=response.results.length-succeeded;
+    const resultHTML=`<div class="batch-config-work-head"><h3>执行完成 · 成功 ${succeeded} · 失败 ${failed}</h3><span class="hint">结果会保留在这里，直到下一次预览或操作</span></div>${response.results.map(r=>`<div class="batch-config-preview-row"><strong>${esc(r.name||'#'+r.server_id)}</strong>${status(r.ok?'成功':'需核对',r.ok?'ok':'bad')}<p class="${r.ok?'muted':'error'}">${esc(r.message)}</p>${r.backup?`<small>备份：<a href="/api/backups/${encodeURIComponent(r.backup)}">${esc(r.backup)}</a></small>`:''}</div>`).join('')}`;
+    await refresh();await bcLoad({keepResult:true});box.innerHTML=resultHTML;box.classList.remove('hidden');box.scrollIntoView({block:'start'});
   }catch(e){bcError('执行失败：'+e.message);button.disabled=false}
 }
 document.addEventListener('click',event=>{
@@ -311,7 +341,7 @@ document.addEventListener('click',event=>{
   const add=event.target.closest('[data-bc-add]');if(add){const row=add.closest('[data-bc-container]'),path=JSON.parse(decodeURIComponent(row.dataset.bcContainer)),parent=path.length?bcRead(path):bc.form,type=row.querySelector('[data-bc-type]').value,key=row.querySelector('[data-bc-key]').value.trim();if(!parent||Array.isArray(parent)){bcError('请在对象中添加字段；列表请先在单机完整配置中调整');return}if(!key||['__proto__','prototype','constructor','id'].includes(key)||Object.hasOwn(parent,key)){bcError('请输入一个新的有效字段名');return}parent[key]=bcDefault(type);if(bc.mode==='edit')bcMark([...path,key]);bcRender();const extra=[...document.querySelectorAll('[data-bc-extra-path]')].find(item=>item.dataset.bcExtraPath===row.dataset.bcContainer);if(extra)extra.open=true;return}
 });
 document.addEventListener('change',event=>{
-  if(event.target.matches('[data-bc-server]')){const id=Number(event.target.dataset.bcServer);event.target.checked?state.selected.add(id):state.selected.delete(id);bcLoad();return}
+  if(event.target.matches('[data-bc-server]')){const id=Number(event.target.dataset.bcServer);event.target.checked?state.selected.add(id):state.selected.delete(id);bcSelectionChanged();return}
   if(event.target.matches('[data-pick]')){bcLoad();return}
   if(event.target.id==='batch-config-object'){bc.index=Number(event.target.value);bc.mode='edit';bcSelect();return}
   if(event.target.matches('[data-bc-client-server]')){const id=event.target.dataset.bcClientServer,tag=event.target.dataset.bcClientTag,selected=new Set(bc.clientTagsByServer[id]||[]);event.target.checked?selected.add(tag):selected.delete(tag);bc.clientTagsByServer[id]=[...selected];bcSyncClientCredentials();bcResetPreview();bcRender();return}

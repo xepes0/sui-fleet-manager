@@ -622,3 +622,81 @@ func TestVerifyNewClientSavedRejectsReturnedMismatch(t *testing.T) {
 		t.Fatalf("expected returned mismatch to fail verification, got %v", err)
 	}
 }
+
+
+func TestDeleteClientSendsNumericIDPayload(t *testing.T) {
+	a := testApp(t)
+	client := map[string]any{"id": float64(7), "name": "alice", "remark": "Alice", "enable": true, "inbounds": []any{float64(4)}}
+	backups, deletes := 0, 0
+	panel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/apiv2/clients":
+			clients := []any{}
+			if client != nil {
+				clients = append(clients, client)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"clients": clients}})
+		case "/app/apiv2/getdb":
+			backups++
+			w.Write(append([]byte("SQLite format 3\x00"), bytes.Repeat([]byte{0}, 32)...))
+		case "/app/apiv2/save":
+			_ = r.ParseForm()
+			if r.Form.Get("object") != "clients" || r.Form.Get("action") != "del" {
+				t.Fatalf("unexpected delete form: %v", r.Form)
+			}
+			if r.Form.Get("data") != "7" {
+				t.Fatalf("client delete must send numeric ID, got %q", r.Form.Get("data"))
+			}
+			deletes++
+			client = nil
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "msg": "save"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer panel.Close()
+
+	id := addTestServer(t, a, panel.URL)
+	req := previewRequest{
+		ServerIDs:     []int64{id},
+		Action:        "config_save",
+		ConfigTarget:  "clients",
+		ConfigMode:    "del",
+		ConfigIdentity: "name:alice",
+	}
+	w := postJSON(t, a.previewHandler, "/api/operations/preview", req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview: %d %s", w.Code, w.Body.String())
+	}
+	var p preview
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Changes) != 1 || p.Changes[0].Error != "" {
+		t.Fatalf("unexpected preview: %s", w.Body.String())
+	}
+
+	w = executePreviewTest(t, a, p.ID)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if backups != 1 || deletes != 1 || client != nil {
+		t.Fatalf("delete did not complete: backups=%d deletes=%d client=%v", backups, deletes, client)
+	}
+}
+
+func TestDeletePayloadUsesTagForTagBasedObjects(t *testing.T) {
+	for _, target := range []string{"inbounds", "outbounds", "endpoints", "services"} {
+		payload, err := configDeletePayload(target, map[string]any{"id": float64(9), "tag": "shared-tag"})
+		if err != nil {
+			t.Fatalf("%s: %v", target, err)
+		}
+		if string(payload) != `"shared-tag"` {
+			t.Fatalf("%s delete payload = %s", target, payload)
+		}
+	}
+	payload, err := configDeletePayload("tls", map[string]any{"id": float64(12), "name": "cert"})
+	if err != nil || string(payload) != "12" {
+		t.Fatalf("tls delete payload = %s, err=%v", payload, err)
+	}
+}

@@ -451,6 +451,26 @@ func configNameKey(target string) string {
 	return "tag"
 }
 
+func configDeletePayload(target string, item map[string]any) (json.RawMessage, error) {
+	switch target {
+	case "clients", "tls":
+		id, ok := item["id"].(float64)
+		if !ok || id < 1 || id != float64(uint64(id)) {
+			return nil, errors.New("object has no valid numeric ID for deletion")
+		}
+		return mustJSON(uint64(id)), nil
+	case "inbounds", "outbounds", "endpoints", "services":
+		tag := strings.TrimSpace(stringField(item, "tag"))
+		if tag == "" {
+			return nil, errors.New("object has no valid tag for deletion")
+		}
+		return mustJSON(tag), nil
+	default:
+		return nil, fmt.Errorf("deletion is not supported for %s", target)
+	}
+}
+
+
 func normalizeNewClientTemplate(template map[string]any) error {
 	if template == nil {
 		return errors.New("client data is required")
@@ -908,7 +928,14 @@ func executeConfigSave(ctx context.Context, a *app, s server, c change, req prev
 		payload = req.Object
 	}
 	if req.ConfigMode == "del" {
-		payload = c.Before
+		var item map[string]any
+		if err := json.Unmarshal(c.Before, &item); err != nil {
+			return backup, err
+		}
+		payload, err = configDeletePayload(req.ConfigTarget, item)
+		if err != nil {
+			return backup, err
+		}
 	}
 	if err := a.suiPost(ctx, s, "save", url.Values{"object": {req.ConfigTarget}, "action": {mode}, "data": {string(payload)}}); err != nil {
 		return backup, err
