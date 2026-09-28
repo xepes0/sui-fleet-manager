@@ -1,4 +1,4 @@
-const tl={items:[],kind:'all',editing:null,applying:null,preview:null,ruleSets:new Map(),subscriptionPreview:null};
+const tl={items:[],kind:'all',editing:null,applying:null,preview:null,ruleSets:new Map(),subscriptionPreview:null,subscriptionExportRows:[]};
 const tlKinds=[['all','全部'],['rule_set','规则集'],['outbound','出站'],['subscription_json','sing-box 订阅'],['subscription_clash','Mihomo 订阅']];
 const tlLabel=kind=>tlKinds.find(row=>row[0]===kind)?.[1]||kind;
 const tlValue=id=>$(id)?.value.trim()||'';
@@ -127,6 +127,83 @@ async function tlDelete(id){
   try{await api('templates/'+id,{method:'DELETE',body:'{}'});await tlLoad();notice('模板已移到隐藏归档')}catch(e){notice('删除失败：'+e.message)}
 }
 
+function subExportURL(client,format){
+  if(format==='json')return client.json_url||'';
+  if(format==='clash')return client.clash_url||'';
+  return client.plain_url||'';
+}
+function subBuildExportRows(results,format='plain',enabledOnly=true){
+  const rows=[],seen=new Set();
+  for(const result of results){
+    if(!result||result.error)continue;
+    for(const client of result.clients||[]){
+      if(enabledOnly&&!client.enabled)continue;
+      const link=subExportURL(client,format);
+      if(!link||seen.has(link))continue;
+      seen.add(link);
+      rows.push({
+        server_id:result.server_id,
+        server:result.server||('服务器 #'+result.server_id),
+        name:client.name,
+        remark:client.remark||client.name,
+        enabled:!!client.enabled,
+        url:link
+      });
+    }
+  }
+  return rows;
+}
+function subExportText(rows){return rows.map(row=>row.url).join('\n')+(rows.length?'\n':'')}
+function subExportFilename(format){
+  const stamp=new Date().toISOString().replace(/[-:]/g,'').replace(/T/,'-').slice(0,15);
+  return `sui-subscriptions-${format}-${stamp}.txt`;
+}
+function subExportRender(open=true){
+  const box=$('subscription-export');
+  if(!open){box.classList.add('hidden');return}
+  const checked=new Set([...box.querySelectorAll?.('[data-sub-export-server]:checked')||[]].map(x=>Number(x.dataset.subExportServer)));
+  const current=Number($('subscription-server')?.value||0);
+  const selected=checked.size?checked:new Set(current?[current]:state.servers.map(s=>s.id));
+  box.classList.remove('hidden');
+  box.innerHTML=`<div class="section-head"><div><h3>批量导出订阅</h3><p>选择多个 S-UI 面板，把用户订阅链接汇总成一个 TXT 文件。</p></div><button id="subscription-export-close" class="text-button" type="button">✕</button></div>
+    <div class="subscription-export-grid">
+      <section><div class="subscription-export-title"><strong>目标服务器</strong><div><button id="subscription-export-all" class="text-button" type="button">全选</button><button id="subscription-export-none" class="text-button" type="button">清空</button></div></div><div class="subscription-export-targets">${state.servers.map(s=>`<label><input type="checkbox" data-sub-export-server="${s.id}" ${selected.has(s.id)?'checked':''}><span><b>${esc(s.name)}</b><small>${esc(s.region||'未分组')}</small></span></label>`).join('')||'<p class="muted">先添加 S-UI 面板。</p>'}</div></section>
+      <section class="subscription-export-options"><label>订阅格式<select id="subscription-export-format"><option value="plain">通用链接</option><option value="json">sing-box</option><option value="clash">Mihomo</option></select></label><label class="check-line"><input id="subscription-export-enabled" type="checkbox" checked> 只导出已启用用户</label><p class="hint">导出的 TXT 每行一个订阅 URL，可直接批量复制或保存。订阅 URL 可读取用户节点配置，请像密码一样保管。</p><button id="subscription-export-generate" class="primary" type="button">生成批量导出</button></section>
+    </div><div id="subscription-export-result"></div>`;
+}
+async function subExportGenerate(){
+  const ids=[...document.querySelectorAll('[data-sub-export-server]:checked')].map(x=>Number(x.dataset.subExportServer));
+  if(!ids.length){notice('请至少选择一台服务器');return}
+  const format=$('subscription-export-format').value,enabledOnly=$('subscription-export-enabled').checked;
+  const button=$('subscription-export-generate'),box=$('subscription-export-result');button.disabled=true;
+  box.innerHTML=`<div class="subscription-export-progress">正在读取 ${ids.length} 台面板的订阅…</div>`;
+  const results=await Promise.all(ids.map(async id=>{
+    try{
+      const result=await api('subscriptions?server_id='+encodeURIComponent(id));
+      return {...result,server_id:id};
+    }catch(error){
+      const server=state.servers.find(s=>s.id===id);
+      return {server_id:id,server:server?.name||('服务器 #'+id),error:error.message,clients:[]};
+    }
+  }));
+  tl.subscriptionExportRows=subBuildExportRows(results,format,enabledOnly);
+  const failures=results.filter(x=>x.error),missing=results.filter(x=>!x.error&&(x.clients||[]).some(client=>(!enabledOnly||client.enabled)&&!subExportURL(client,format))).length;
+  const rows=tl.subscriptionExportRows;
+  box.innerHTML=`<div class="subscription-export-summary"><div><h4>导出结果 · ${rows.length} 条链接</h4><p class="hint">成功读取 ${results.length-failures.length} / ${results.length} 台服务器${missing?` · ${missing} 台存在未配置公开订阅地址的用户`:''}</p></div><div class="button-row"><button id="subscription-export-copy" class="secondary" type="button" ${rows.length?'':'disabled'}>复制全部链接</button><button id="subscription-export-download" class="primary" type="button" ${rows.length?'':'disabled'}>下载 TXT</button></div></div>
+    ${failures.length?`<div class="template-warning">${failures.map(x=>`${esc(x.server)}：${esc(x.error)}`).join('<br>')}</div>`:''}
+    <div class="subscription-export-list">${rows.length?rows.map(row=>`<div><span><b>${esc(row.remark)}</b><small>${esc(row.server)} · ${esc(row.name)}</small></span><code>${esc(row.url)}</code></div>`).join(''):'<div class="empty">没有可导出的订阅链接。请检查公开订阅地址或筛选条件。</div>'}</div>`;
+  button.disabled=false;
+}
+async function subExportCopy(){
+  if(!tl.subscriptionExportRows.length)return;
+  try{await navigator.clipboard.writeText(subExportText(tl.subscriptionExportRows));notice(`已复制 ${tl.subscriptionExportRows.length} 条订阅链接`)}catch(e){notice('复制失败：'+e.message)}
+}
+function subExportDownload(){
+  if(!tl.subscriptionExportRows.length)return;
+  const format=$('subscription-export-format')?.value||'plain',blob=new Blob([subExportText(tl.subscriptionExportRows)],{type:'text/plain;charset=utf-8'});
+  const href=URL.createObjectURL(blob),a=document.createElement('a');a.href=href;a.download=subExportFilename(format);document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(href),0);
+}
+
 function subServerOptions(){
   const selected=$('subscription-server').value;
   $('subscription-server').innerHTML='<option value="">请选择面板</option>'+state.servers.map(s=>`<option value="${s.id}">${esc(s.name)} · ${esc(s.region)}</option>`).join('');
@@ -168,6 +245,13 @@ document.addEventListener('click',async e=>{
   const edit=e.target.closest('[data-template-edit]');if(edit){try{await tlOpen(await api('templates/'+edit.dataset.templateEdit))}catch(err){notice(err.message)}}
   const apply=e.target.closest('[data-template-apply]');if(apply)tlApply(Number(apply.dataset.templateApply));
   const remove=e.target.closest('[data-template-delete]');if(remove)tlDelete(Number(remove.dataset.templateDelete));
+  if(e.target.id==='subscriptions-export-toggle'){subExportRender(true);return}
+  if(e.target.id==='subscription-export-close'){subExportRender(false);return}
+  if(e.target.id==='subscription-export-all'){document.querySelectorAll('[data-sub-export-server]').forEach(x=>x.checked=true);return}
+  if(e.target.id==='subscription-export-none'){document.querySelectorAll('[data-sub-export-server]').forEach(x=>x.checked=false);return}
+  if(e.target.id==='subscription-export-generate'){subExportGenerate();return}
+  if(e.target.id==='subscription-export-copy'){subExportCopy();return}
+  if(e.target.id==='subscription-export-download'){subExportDownload();return}
   const copy=e.target.closest('[data-sub-copy]');if(copy){try{await navigator.clipboard.writeText(copy.dataset.subCopy);notice('订阅链接已复制')}catch(err){notice('复制失败：'+err.message)}}
   const change=e.target.closest('[data-sub-state]');if(change){const id=Number($('subscription-server').value),enabled=change.dataset.subEnable==='true';subPreview({server_ids:[id],action:enabled?'client_enable':'client_disable',client_name:change.dataset.subState},`${enabled?'启用':'停用'}用户 ${change.dataset.subState}`)}
   if(e.target.id==='subscription-execute')subExecute();
