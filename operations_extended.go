@@ -89,8 +89,12 @@ func validateExtendedRequest(req previewRequest) error {
 		}
 		fallthrough
 	case "route_rule_delete":
-		if req.RouteIndex == nil {
-			return errors.New("route index required")
+		if len(req.RouteMatch) > 0 {
+			if _, err := decodeObject(req.RouteMatch, "route match"); err != nil {
+				return err
+			}
+		} else if req.RouteIndex == nil {
+			return errors.New("route index or route match required")
 		}
 	}
 	if req.RouteIndex != nil && (*req.RouteIndex < 0 || *req.RouteIndex > 1000) {
@@ -169,6 +173,28 @@ func routeAfter(config map[string]any, rules []any) json.RawMessage {
 	copyConfig["route"] = copyRoute
 	result, _ := json.Marshal(copyConfig)
 	return result
+}
+
+func matchedRouteIndex(rules []any, raw json.RawMessage) (int, error) {
+	match, err := decodeObject(raw, "route match")
+	if err != nil {
+		return 0, err
+	}
+	index := -1
+	for i, candidate := range rules {
+		object, ok := candidate.(map[string]any)
+		if !ok || !reflect.DeepEqual(object, match) {
+			continue
+		}
+		if index >= 0 {
+			return 0, errors.New("matching route rule is duplicated on panel")
+		}
+		index = i
+	}
+	if index < 0 {
+		return 0, errors.New("matching route rule not found on panel")
+	}
+	return index, nil
 }
 
 func (a *app) validateRouteTarget(ctx context.Context, s server, rule map[string]any) error {
@@ -324,7 +350,13 @@ func previewExtended(ctx context.Context, a *app, s server, req previewRequest, 
 		before := append([]any{}, rules...)
 		after := append([]any{}, rules...)
 		index := 0
-		if req.RouteIndex != nil {
+		if req.Action != "route_rule_add" && len(req.RouteMatch) > 0 {
+			index, err = matchedRouteIndex(rules, req.RouteMatch)
+			if err != nil {
+				c.Error = err.Error()
+				return
+			}
+		} else if req.RouteIndex != nil {
 			index = *req.RouteIndex
 		}
 		switch req.Action {
