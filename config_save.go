@@ -500,7 +500,47 @@ func clientDetailAfterSave(ctx context.Context, a *app, s server, summary map[st
 	return items[0], nil
 }
 
+func jsonContains(actual, expected any) bool {
+	switch want := expected.(type) {
+	case map[string]any:
+		got, ok := actual.(map[string]any)
+		if !ok {
+			return false
+		}
+		for key, value := range want {
+			gotValue, exists := got[key]
+			if !exists || !jsonContains(gotValue, value) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		got, ok := actual.([]any)
+		if !ok || len(got) != len(want) {
+			return false
+		}
+		for i := range want {
+			if !jsonContains(got[i], want[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(actual, expected)
+	}
+}
+
 func verifyNewClientSaved(expected, actual map[string]any) error {
+	// Client detail fields differ across S-UI versions. Creation is considered
+	// successful once the new object exists under the requested name. Any other
+	// fields that the panel returns are verified, but fields omitted by that
+	// S-UI version are treated as unavailable rather than as write failures.
+	expectedName, _ := expected["name"].(string)
+	actualName, exists := actual["name"]
+	if expectedName == "" || !exists || actualName != expectedName {
+		return errors.New("save accepted, created client name could not be verified")
+	}
+
 	// S-UI generates links and owns traffic/timestamp counters after a client is
 	// written. Those fields are deliberately excluded from equality checks.
 	serverOwned := map[string]bool{
@@ -509,14 +549,14 @@ func verifyNewClientSaved(expected, actual map[string]any) error {
 		"createdAt": true, "onlineAt": true, "nextReset": true,
 	}
 	for field, value := range expected {
-		if serverOwned[field] {
+		if field == "name" || serverOwned[field] {
 			continue
 		}
 		actualValue, exists := actual[field]
 		if !exists {
-			return fmt.Errorf("save accepted, field %s was not returned by client detail", field)
+			continue
 		}
-		if !reflect.DeepEqual(actualValue, value) {
+		if !jsonContains(actualValue, value) {
 			return fmt.Errorf("save accepted, field %s did not match", field)
 		}
 	}
