@@ -32,7 +32,7 @@ function bcCopiedFieldPatch(before,after,path=[]){
   }
   return patches;
 }
-function bcClientForm(){return {name:'',remark:'',desc:'',group:'',enable:true,volume:0,expiry:0,delayStart:false,autoReset:false,resetDays:0,config:{},inbounds:[]}}
+function bcClientForm(){return {name:'',remark:'',desc:'',group:'',enable:true,volume:0,expiry:0,delayStart:false,autoReset:false,resetDays:0,config:{},inbounds:[],links:[]}}
 function bcNewCredential(key){
   if(['vless','vmess'].includes(key))return {uuid:crypto.randomUUID()};
   if(key==='tuic')return {uuid:crypto.randomUUID(),password:crypto.randomUUID().replaceAll('-','')};
