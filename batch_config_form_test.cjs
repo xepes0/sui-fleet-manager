@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const batchSource = fs.readFileSync('web/batch-config.js', 'utf8');
-const batchFunctions = batchSource.slice(batchSource.indexOf('const bcOutboundTypes='), batchSource.indexOf('function bcResetPreview()'));
+const batchFunctions = batchSource.slice(batchSource.indexOf('const bcOutboundTypes='), batchSource.indexOf('function bcResetPreview('));
 const batch = {structuredClone};
 batch.crypto = require('node:crypto').webcrypto;
 batch.bc = {inboundCopy: false, tlsName: 'shared-cert'};
