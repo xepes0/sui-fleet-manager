@@ -1,0 +1,99 @@
+name: Staging CI and release
+
+on:
+  pull_request:
+    branches:
+      - staging
+  push:
+    branches:
+      - staging
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test and build linux/amd64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check web/app.js
+          node --check web/templates.js
+
+      - name: Run UI tests
+        run: |
+          node --test ui_form_test.cjs
+          node --test batch_config_form_test.cjs
+
+      - name: Build Linux amd64 binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -o dist/fleet-manager-linux-amd64 .
+          (
+            cd dist
+            sha256sum fleet-manager-linux-amd64 > fleet-manager-linux-amd64.sha256
+          )
+
+      - name: Upload staging build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fleet-manager-linux-amd64
+          path: |
+            dist/fleet-manager-linux-amd64
+            dist/fleet-manager-linux-amd64.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish staging-latest
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download verified build
+        uses: actions/download-artifact@v4
+        with:
+          name: fleet-manager-linux-amd64
+          path: dist
+
+      - name: Replace staging-latest prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: staging-latest
+        run: |
+          gh release delete "$TAG" --yes || true
+          git tag -f "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG" --force
+          gh release create "$TAG"             dist/fleet-manager-linux-amd64             dist/fleet-manager-linux-amd64.sha256             --title "Staging latest"             --notes "Automated staging build for commit $GITHUB_SHA."             --prerelease             --target "$GITHUB_SHA"
