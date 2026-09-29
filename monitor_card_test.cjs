@@ -39,7 +39,9 @@ test('latency and packet loss severity classes are deterministic', () => {
 });
 
 test('monitor cards use compact responsive grid and mapped colors', () => {
-  assert.match(css, /grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(360px,\s*1fr\)\)/);
+  assert.match(css, /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /align-items:\s*start/);
+  assert.match(css, /@media \(max-width: 1120px\)[^{]*\{[^}]*\.monitor-grid \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/s);
   assert.match(css, /\.monitor-meter-cpu[^{]*[\s\S]*?#59c9bd/);
   assert.match(css, /\.monitor-meter-memory[^{]*[\s\S]*?#a884e8/);
   assert.match(css, /\.monitor-meter-disk[^{]*[\s\S]*?#f0a45f/);
