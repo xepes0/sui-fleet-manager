@@ -88,3 +88,34 @@ test('bulk subscription export skips missing and duplicate URLs', () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].server, 'one');
 });
+
+
+test('subscription export groups links by username across servers', () => {
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(subscriptionExportSource, context);
+  const rows = [
+    {server_id:1,server:'HK-1',name:'alice',remark:'Alice',url:'https://one.example/alice'},
+    {server_id:2,server:'US-1',name:'alice',remark:'Alice US',url:'https://two.example/alice'},
+    {server_id:2,server:'US-1',name:'bob',remark:'Bob',url:'https://two.example/bob'}
+  ];
+  const groups = vm.runInContext('subGroupExportRows', context)(rows);
+  assert.equal(groups.length, 2);
+  const alice = groups.find(group => group.name === 'alice');
+  assert.equal(alice.server_count, 2);
+  assert.equal(alice.link_count, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(alice.servers.sort())), [1,2]);
+  assert.equal(groups.find(group => group.name === 'bob').link_count, 1);
+});
+
+test('username grouping keeps distinct usernames separate even with the same remark', () => {
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(subscriptionExportSource, context);
+  const rows = [
+    {server_id:1,server:'one',name:'user-a',remark:'Shared',url:'https://one.example/a'},
+    {server_id:2,server:'two',name:'user-b',remark:'Shared',url:'https://two.example/b'}
+  ];
+  const groups = vm.runInContext('subGroupExportRows', context)(rows);
+  assert.deepEqual(groups.map(group => group.name).sort(), ['user-a','user-b']);
+});
