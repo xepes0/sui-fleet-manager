@@ -117,5 +117,5 @@ test('username grouping keeps distinct usernames separate even with the same rem
     {server_id:2,server:'two',name:'user-b',remark:'Shared',url:'https://two.example/b'}
   ];
   const groups = vm.runInContext('subGroupExportRows', context)(rows);
-  assert.deepEqual(groups.map(group => group.name).sort(), ['user-a','user-b']);
+  assert.deepEqual(JSON.parse(JSON.stringify(groups.map(group => group.name).sort())), ['user-a','user-b']);
 });
