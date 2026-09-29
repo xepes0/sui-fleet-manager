@@ -1,4 +1,4 @@
-const tl={items:[],kind:'all',editing:null,applying:null,preview:null,ruleSets:new Map(),subscriptionPreview:null,subscriptionExportRows:[]};
+const tl={items:[],kind:'all',editing:null,applying:null,preview:null,ruleSets:new Map(),subscriptionPreview:null,subscriptionExportRows:[],subscriptionExportGroups:[]};
 const tlKinds=[['all','全部'],['rule_set','规则集'],['outbound','出站'],['subscription_json','sing-box 订阅'],['subscription_clash','Mihomo 订阅']];
 const tlLabel=kind=>tlKinds.find(row=>row[0]===kind)?.[1]||kind;
 const tlValue=id=>$(id)?.value.trim()||'';
@@ -153,6 +153,37 @@ function subBuildExportRows(results,format='plain',enabledOnly=true){
   }
   return rows;
 }
+function subGroupExportRows(rows){
+  const groups=new Map();
+  for(const row of rows){
+    const key=String(row.name||'').trim();
+    if(!key)continue;
+    let group=groups.get(key);
+    if(!group){group={name:key,remark:row.remark||key,rows:[],servers:new Set()};groups.set(key,group)}
+    group.rows.push(row);group.servers.add(row.server_id);
+    if(group.remark===group.name&&row.remark&&row.remark!==row.name)group.remark=row.remark;
+  }
+  return [...groups.values()].map(group=>({...group,server_count:group.servers.size,link_count:group.rows.length,servers:[...group.servers]})).sort((a,b)=>a.name.localeCompare(b.name,'zh-CN',{numeric:true,sensitivity:'base'}));
+}
+function subExportSelectedRows(){
+  const names=new Set([...document.querySelectorAll('[data-sub-export-user]:checked')].map(x=>decodeURIComponent(x.dataset.subExportUser)));
+  return tl.subscriptionExportRows.filter(row=>names.has(row.name));
+}
+function subExportUpdateSelection(){
+  const rows=subExportSelectedRows(),users=new Set(rows.map(row=>row.name));
+  const count=$('subscription-export-selection-count');
+  if(count)count.textContent=`已选 ${users.size} 个用户名 · ${rows.length} 条链接`;
+  const copy=$('subscription-export-copy'),download=$('subscription-export-download');
+  if(copy)copy.disabled=!rows.length;
+  if(download)download.disabled=!rows.length;
+}
+function subExportFilterUsers(){
+  const query=String($('subscription-export-user-search')?.value||'').trim().toLowerCase();
+  document.querySelectorAll('[data-sub-export-user-row]').forEach(row=>{
+    const haystack=String(row.dataset.subExportSearch||'').toLowerCase();
+    row.classList.toggle('hidden',!!query&&!haystack.includes(query));
+  });
+}
 function subExportText(rows){return rows.map(row=>row.url).join('\n')+(rows.length?'\n':'')}
 function subExportFilename(format){
   const stamp=new Date().toISOString().replace(/[-:]/g,'').replace(/T/,'-').slice(0,15);
@@ -187,20 +218,23 @@ async function subExportGenerate(){
     }
   }));
   tl.subscriptionExportRows=subBuildExportRows(results,format,enabledOnly);
+  tl.subscriptionExportGroups=subGroupExportRows(tl.subscriptionExportRows);
   const failures=results.filter(x=>x.error),missing=results.filter(x=>!x.error&&(x.clients||[]).some(client=>(!enabledOnly||client.enabled)&&!subExportURL(client,format))).length;
-  const rows=tl.subscriptionExportRows;
-  box.innerHTML=`<div class="subscription-export-summary"><div><h4>导出结果 · ${rows.length} 条链接</h4><p class="hint">成功读取 ${results.length-failures.length} / ${results.length} 台服务器${missing?` · ${missing} 台存在未配置公开订阅地址的用户`:''}</p></div><div class="button-row"><button id="subscription-export-copy" class="secondary" type="button" ${rows.length?'':'disabled'}>复制全部链接</button><button id="subscription-export-download" class="primary" type="button" ${rows.length?'':'disabled'}>下载 TXT</button></div></div>
+  const rows=tl.subscriptionExportRows,groups=tl.subscriptionExportGroups;
+  box.innerHTML=`<div class="subscription-export-summary"><div><h4>读取完成 · ${groups.length} 个用户名 · ${rows.length} 条链接</h4><p class="hint">成功读取 ${results.length-failures.length} / ${results.length} 台服务器${missing?` · ${missing} 台存在未配置公开订阅地址的用户`:''}</p></div></div>
     ${failures.length?`<div class="template-warning">${failures.map(x=>`${esc(x.server)}：${esc(x.error)}`).join('<br>')}</div>`:''}
-    <div class="subscription-export-list">${rows.length?rows.map(row=>`<div><span><b>${esc(row.remark)}</b><small>${esc(row.server)} · ${esc(row.name)}</small></span><code>${esc(row.url)}</code></div>`).join(''):'<div class="empty">没有可导出的订阅链接。请检查公开订阅地址或筛选条件。</div>'}</div>`;
+    ${groups.length?`<div class="subscription-export-user-toolbar"><input id="subscription-export-user-search" type="search" placeholder="搜索用户名或备注"><div><button id="subscription-export-user-all" class="text-button" type="button">全选当前结果</button><button id="subscription-export-user-none" class="text-button" type="button">清空</button></div></div>
+      <div class="subscription-export-user-list">${groups.map(group=>`<article class="subscription-export-user" data-sub-export-user-row data-sub-export-search="${esc(group.name+' '+group.remark)}"><label><input type="checkbox" data-sub-export-user="${encodeURIComponent(group.name)}"><span><b>${esc(group.name)}</b><small>${group.remark!==group.name?esc(group.remark)+' · ':''}覆盖 ${group.server_count} 台 · ${group.link_count} 条链接</small></span></label><details><summary>查看服务器与链接</summary><div class="subscription-export-user-links">${group.rows.map(row=>`<div><span>${esc(row.server)}</span><code>${esc(row.url)}</code></div>`).join('')}</div></details></article>`).join('')}</div>
+      <div class="subscription-export-actions"><span id="subscription-export-selection-count">已选 0 个用户名 · 0 条链接</span><div class="button-row"><button id="subscription-export-copy" class="secondary" type="button" disabled>复制所选用户名链接</button><button id="subscription-export-download" class="primary" type="button" disabled>下载所选 TXT</button></div></div>`:'<div class="empty">没有可导出的订阅链接。请检查公开订阅地址或筛选条件。</div>'}`;
   button.disabled=false;
 }
 async function subExportCopy(){
-  if(!tl.subscriptionExportRows.length)return;
-  try{await navigator.clipboard.writeText(subExportText(tl.subscriptionExportRows));notice(`已复制 ${tl.subscriptionExportRows.length} 条订阅链接`)}catch(e){notice('复制失败：'+e.message)}
+  const rows=subExportSelectedRows();if(!rows.length){notice('请先选择用户名');return}
+  try{await navigator.clipboard.writeText(subExportText(rows));notice(`已复制 ${new Set(rows.map(row=>row.name)).size} 个用户名、${rows.length} 条订阅链接`)}catch(e){notice('复制失败：'+e.message)}
 }
 function subExportDownload(){
-  if(!tl.subscriptionExportRows.length)return;
-  const format=$('subscription-export-format')?.value||'plain',blob=new Blob([subExportText(tl.subscriptionExportRows)],{type:'text/plain;charset=utf-8'});
+  const rows=subExportSelectedRows();if(!rows.length){notice('请先选择用户名');return}
+  const format=$('subscription-export-format')?.value||'plain',blob=new Blob([subExportText(rows)],{type:'text/plain;charset=utf-8'});
   const href=URL.createObjectURL(blob),a=document.createElement('a');a.href=href;a.download=subExportFilename(format);document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(href),0);
 }
 
@@ -250,13 +284,16 @@ document.addEventListener('click',async e=>{
   if(e.target.id==='subscription-export-all'){document.querySelectorAll('[data-sub-export-server]').forEach(x=>x.checked=true);return}
   if(e.target.id==='subscription-export-none'){document.querySelectorAll('[data-sub-export-server]').forEach(x=>x.checked=false);return}
   if(e.target.id==='subscription-export-generate'){subExportGenerate();return}
+  if(e.target.id==='subscription-export-user-all'){document.querySelectorAll('[data-sub-export-user-row]:not(.hidden) [data-sub-export-user]').forEach(x=>x.checked=true);subExportUpdateSelection();return}
+  if(e.target.id==='subscription-export-user-none'){document.querySelectorAll('[data-sub-export-user]').forEach(x=>x.checked=false);subExportUpdateSelection();return}
   if(e.target.id==='subscription-export-copy'){subExportCopy();return}
   if(e.target.id==='subscription-export-download'){subExportDownload();return}
   const copy=e.target.closest('[data-sub-copy]');if(copy){try{await navigator.clipboard.writeText(copy.dataset.subCopy);notice('订阅链接已复制')}catch(err){notice('复制失败：'+err.message)}}
   const change=e.target.closest('[data-sub-state]');if(change){const id=Number($('subscription-server').value),enabled=change.dataset.subEnable==='true';subPreview({server_ids:[id],action:enabled?'client_enable':'client_disable',client_name:change.dataset.subState},`${enabled?'启用':'停用'}用户 ${change.dataset.subState}`)}
   if(e.target.id==='subscription-execute')subExecute();
 });
-document.addEventListener('change',async e=>{if(e.target.id==='template-kind'){if(e.target.value==='subscription_json'){const rows=await Promise.all(tl.items.filter(x=>x.kind==='rule_set').map(async x=>[x.id,(await api('templates/'+x.id)).payload]));tl.ruleSets=new Map(rows)}tlRenderFields()}if(e.target.id==='tl-type')tlRenderProtocolFields();if(e.target.id==='subscription-server')subLoad()});
+document.addEventListener('change',async e=>{if(e.target.id==='template-kind'){if(e.target.value==='subscription_json'){const rows=await Promise.all(tl.items.filter(x=>x.kind==='rule_set').map(async x=>[x.id,(await api('templates/'+x.id)).payload]));tl.ruleSets=new Map(rows)}tlRenderFields()}if(e.target.id==='tl-type')tlRenderProtocolFields();if(e.target.id==='subscription-server')subLoad();if(e.target.matches('[data-sub-export-user]'))subExportUpdateSelection()});
+document.addEventListener('input',e=>{if(e.target.id==='subscription-export-user-search')subExportFilterUsers()});
 $('template-new').onclick=()=>tlOpen().catch(e=>notice(e.message));$('template-close').onclick=()=>$('template-dialog').close();$('template-cancel').onclick=()=>$('template-dialog').close();$('template-form').onsubmit=tlSave;
 $('subscriptions-refresh').onclick=subLoad;
 $('subscription-content').addEventListener('submit',e=>{if(e.target.id!=='subscription-settings-form')return;e.preventDefault();const id=Number($('subscription-server').value),value=tlValue('subscription-base-input');if(value&&!/^https:\/\/[^/\s?#]+(?:\/[^?#]*)?$/i.test(value)){notice('请输入完整的 HTTPS 基础 URL');return}subPreview({server_ids:[id],action:'config_save',config_target:'settings',config_mode:'set',object:{subURI:value}},'修改订阅公开地址')});
