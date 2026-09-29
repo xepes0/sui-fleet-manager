@@ -5,6 +5,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync('web/monitor.js', 'utf8');
 const css = fs.readFileSync('web/monitor.css', 'utf8');
+const appCss = fs.readFileSync('web/style.css', 'utf8');
 const helpers = source.slice(source.indexOf('function monitorPercent('), source.indexOf('function monitorUptime('));
 
 function context() {
@@ -39,11 +40,31 @@ test('latency and packet loss severity classes are deterministic', () => {
 });
 
 test('monitor cards use compact responsive grid and mapped colors', () => {
-  assert.match(css, /grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(360px,\s*1fr\)\)/);
+  assert.match(css, /grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /align-items:\s*start/);
+  assert.match(css, /@media \(max-width: 1480px\)[^{]*\{[^}]*\.monitor-grid \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \}/s);
+  assert.match(css, /@media \(max-width: 1120px\)[^{]*\{[^}]*\.monitor-grid \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/s);
+  assert.match(css, /\.monitor-regions\s*\{[^}]*display:flex[^}]*overflow-x:auto/s);
   assert.match(css, /\.monitor-meter-cpu[^{]*[\s\S]*?#59c9bd/);
   assert.match(css, /\.monitor-meter-memory[^{]*[\s\S]*?#a884e8/);
   assert.match(css, /\.monitor-meter-disk[^{]*[\s\S]*?#f0a45f/);
   assert.match(css, /\.monitor-meter-load[^{]*[\s\S]*?#ec87b6/);
   assert.match(css, /\.traffic-up\s*\{[^}]*#f0b64f/);
   assert.match(css, /\.traffic-down\s*\{[^}]*#56d39a/);
+});
+
+
+test('console uses a wider desktop canvas without oversized side gutters', () => {
+  assert.match(appCss, /main\{width:100%;max-width:1720px;margin:auto;padding:28px 24px 70px\}/);
+  assert.match(appCss, /calc\(\(100vw - 1672px\)\/2\)/);
+});
+
+
+test('monitor home uses a unified grid with a region filter instead of per-region rows', () => {
+  const source = fs.readFileSync('web/monitor.js', 'utf8');
+  const html = fs.readFileSync('web/index.html', 'utf8');
+  assert.match(source, /renderMonitorRegions\(\)/);
+  assert.match(source, /monitorRegion === 'all'/);
+  assert.doesNotMatch(source, /class="monitor-region"/);
+  assert.match(html, /id="monitor-regions"/);
 });

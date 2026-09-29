@@ -1,5 +1,6 @@
 let pingHistoryAt = 0;
 let pingHistoryLoading = false;
+let monitorRegion = 'all';
 
 function monitorPercent(used, total) {
   const a = Number(used), b = Number(total);
@@ -30,6 +31,26 @@ function monitorLossClass(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 'ping-value-muted';
   return n <= 0.1 ? 'ping-loss-good' : n <= 5 ? 'ping-loss-warn' : 'ping-loss-bad';
+}
+
+function monitorRegionFlag(region) {
+  const flags = {CN:'🇨🇳',HK:'🇭🇰',SG:'🇸🇬',JP:'🇯🇵',US:'🇺🇸',TW:'🇹🇼',KR:'🇰🇷',DE:'🇩🇪',GB:'🇬🇧',FR:'🇫🇷',CA:'🇨🇦',AU:'🇦🇺'};
+  return flags[String(region || '').toUpperCase()] || '🌐';
+}
+
+function renderMonitorRegions() {
+  const box = $('monitor-regions');
+  if (!box) return;
+  const counts = new Map();
+  for (const node of state.monitorNodes) {
+    const region = String(node.region || '其他').toUpperCase();
+    counts.set(region, (counts.get(region) || 0) + 1);
+  }
+  if (monitorRegion !== 'all' && !counts.has(monitorRegion)) monitorRegion = 'all';
+  const chips = [...counts.entries()].sort(([a],[b]) => a.localeCompare(b)).map(([region,count]) =>
+    `<button type="button" data-monitor-region="${esc(region)}" class="${monitorRegion===region?'active':''}"><span>${monitorRegionFlag(region)}</span><b>${esc(region)}</b><em>${count}</em></button>`
+  ).join('');
+  box.innerHTML = `<button type="button" data-monitor-region="all" class="${monitorRegion==='all'?'active':''}"><b>全部</b><em>${state.monitorNodes.length}</em></button>${chips}`;
 }
 
 function monitorUptime(seconds) {
@@ -107,20 +128,19 @@ function monitorCard(node) {
 }
 
 function renderMonitorHome() {
+  renderMonitorRegions();
   const term = ($('monitor-search').value || '').trim().toLowerCase();
-  const nodes = state.monitorNodes.filter(node => !term || `${node.name || ''} ${node.region || ''} ${node.group || ''}`.toLowerCase().includes(term));
+  const nodes = state.monitorNodes.filter(node => {
+    const matchesRegion = monitorRegion === 'all' || String(node.region || '其他').toUpperCase() === monitorRegion;
+    const matchesTerm = !term || `${node.name || ''} ${node.region || ''} ${node.group || ''}`.toLowerCase().includes(term);
+    return matchesRegion && matchesTerm;
+  });
   $('monitor-count').textContent = `显示 ${nodes.length} / ${state.monitorNodes.length} 台`;
   if (!state.monitorNodes.length) {
     $('server-list').innerHTML = state.dashboard.length ? `<div class="empty">Komari 探针数据暂不可用；下方仍可打开已登记的 S-UI 面板。</div><div class="monitor-grid">${state.dashboard.map(serverCard).join('')}</div>` : '<div class="empty">暂无探针。先检查 Komari 连接或添加 S-UI 面板。</div>';
     return;
   }
-  const groups = new Map();
-  for (const node of nodes) {
-    const region = node.region || '🌐';
-    if (!groups.has(region)) groups.set(region, []);
-    groups.get(region).push(node);
-  }
-  $('server-list').innerHTML = groups.size ? [...groups].map(([region, items]) => `<section class="monitor-region"><h3 class="region-title">${esc(region)} <span class="region-count">${items.filter(x => x.status?.online).length} / ${items.length} 在线</span></h3><div class="monitor-grid">${items.map(monitorCard).join('')}</div></section>`).join('') : '<div class="empty">没有匹配的服务器</div>';
+  $('server-list').innerHTML = nodes.length ? `<div class="monitor-grid">${nodes.map(monitorCard).join('')}</div>` : '<div class="empty">没有匹配的服务器</div>';
 }
 
 async function loadPingHistory() {
@@ -144,3 +164,9 @@ async function loadPingHistory() {
 }
 
 $('monitor-search').addEventListener('input', renderMonitorHome);
+$('monitor-regions')?.addEventListener('click', event => {
+  const button = event.target.closest('[data-monitor-region]');
+  if (!button) return;
+  monitorRegion = button.dataset.monitorRegion || 'all';
+  renderMonitorHome();
+});
