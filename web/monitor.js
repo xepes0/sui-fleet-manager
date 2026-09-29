@@ -12,6 +12,14 @@ function monitorMeter(label, amount, tone) {
   return `<div class="monitor-meter monitor-meter-${tone}"><div class="monitor-meter-head"><span>${esc(label)}</span><b>${text}</b></div><div class="monitor-meter-track"><i style="width:${width}%"></i></div></div>`;
 }
 
+function monitorLoadMeter(load) {
+  const amount = load == null ? null : Math.max(0, Number(load) || 0);
+  const width = amount == null ? 0 : Math.min(100, amount * 25);
+  const text = amount == null ? '—' : amount.toFixed(2);
+  return `<div class="monitor-meter monitor-meter-load"><div class="monitor-meter-head"><span>负载</span><b>${esc(text)}</b></div><div class="monitor-meter-track"><i style="width:${width}%"></i></div></div>`;
+}
+
+
 function monitorLatencyClass(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return 'ping-value-muted';
@@ -84,7 +92,7 @@ function monitorCard(node) {
   const load = live.load == null ? null : Math.max(0, Number(live.load) || 0);
   return `<article class="monitor-card ${online ? '' : 'offline'}" ${cardAction}>
     <div class="monitor-card-head"><div class="monitor-name"><span class="monitor-region-flag">${esc(node.region || '🌐')}</span><div><h3>${esc(name)}</h3><small>${esc(node.cpu_name || node.os || 'Komari 探针')}</small></div></div>${status(online ? '在线' : '离线', online ? 'ok' : 'bad')}</div>
-    <div class="monitor-meters">${monitorMeter('CPU', cpu, 'cpu')}${monitorMeter('内存', mem, 'memory')}${monitorMeter('磁盘', disk, 'disk')}${monitorMeter('负载', load == null ? null : Math.min(100, load * 25), 'load').replace(load == null ? '—' : `${Math.round(Math.min(100, load * 25))}%`, load == null ? '—' : esc(load.toFixed(2)))}</div>
+    <div class="monitor-meters">${monitorMeter('CPU', cpu, 'cpu')}${monitorMeter('内存', mem, 'memory')}${monitorMeter('磁盘', disk, 'disk')}${monitorLoadMeter(load)}</div>
     <div class="monitor-facts">
       <div class="monitor-fact monitor-fact-traffic"><span>实时流量</span><b><em class="traffic-up">↑ ${esc(upload)}</em><em class="traffic-down">↓ ${esc(download)}</em></b></div>
       <div class="monitor-fact"><span>连接</span><b>TCP ${esc(live.connections ?? '—')} · UDP ${esc(live.connections_udp ?? '—')}</b></div>
