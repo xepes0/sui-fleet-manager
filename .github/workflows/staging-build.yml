@@ -38,12 +38,14 @@ jobs:
       - name: Check JavaScript syntax
         run: |
           node --check web/app.js
+          node --check web/monitor.js
           node --check web/templates.js
 
       - name: Run UI tests
         run: |
           node --test ui_form_test.cjs
           node --test batch_config_form_test.cjs
+          node --test monitor_card_test.cjs
 
       - name: Build Linux amd64 binary
         env:
