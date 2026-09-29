@@ -6,7 +6,7 @@
 .monitor-filter input { width: min(360px, 100%); margin: 0; }
 .monitor-filter span { color: #9bb3c6; font-size: 12px; white-space: nowrap; }
 .monitor-region { min-width: 0; }
-.monitor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; }
+.monitor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .monitor-card { background: #172637; border: 1px solid #344e60; border-radius: 14px; padding: 13px 14px 12px; min-width: 0; box-shadow: 0 10px 24px #02091545; }
 .monitor-card[data-detail] { cursor: pointer; }
 .monitor-card:hover { border-color: #63cfbf; transform: translateY(-1px); }
