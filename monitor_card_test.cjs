@@ -5,6 +5,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync('web/monitor.js', 'utf8');
 const css = fs.readFileSync('web/monitor.css', 'utf8');
+const appCss = fs.readFileSync('web/style.css', 'utf8');
 const helpers = source.slice(source.indexOf('function monitorPercent('), source.indexOf('function monitorUptime('));
 
 function context() {
@@ -48,4 +49,10 @@ test('monitor cards use compact responsive grid and mapped colors', () => {
   assert.match(css, /\.monitor-meter-load[^{]*[\s\S]*?#ec87b6/);
   assert.match(css, /\.traffic-up\s*\{[^}]*#f0b64f/);
   assert.match(css, /\.traffic-down\s*\{[^}]*#56d39a/);
+});
+
+
+test('console uses a wider desktop canvas without oversized side gutters', () => {
+  assert.match(appCss, /main\{width:100%;max-width:1720px;margin:auto;padding:28px 24px 70px\}/);
+  assert.match(appCss, /calc\(\(100vw - 1672px\)\/2\)/);
 });
