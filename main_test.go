@@ -33,6 +33,9 @@ func testApp(t *testing.T) *app {
 	if err := initializeJobStore(db); err != nil {
 		t.Fatal(err)
 	}
+	if err := initializePreferenceStore(db); err != nil {
+		t.Fatal(err)
+	}
 	return &app{db: db, key: bytes.Repeat([]byte{3}, 32), username: "admin", password: "long-test-password", dataDir: dir, client: &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, previews: map[string]preview{}}
 }
 
