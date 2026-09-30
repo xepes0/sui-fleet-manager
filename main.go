@@ -160,6 +160,9 @@ func main() {
 	if err := initializeJobStore(db); err != nil {
 		log.Fatal(err)
 	}
+	if err := initializePreferenceStore(db); err != nil {
+		log.Fatal(err)
+	}
 	_ = os.Chmod(filepath.Join(dataDir, "fleet.db"), 0600)
 	a := &app{db: db, key: key, username: username, password: password, komariURL: strings.TrimRight(os.Getenv("KOMARI_URL"), "/"), komariPublicURL: strings.TrimRight(os.Getenv("KOMARI_PUBLIC_URL"), "/"), komariKey: os.Getenv("KOMARI_API_KEY"), dataDir: dataDir, previews: make(map[string]preview), client: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	if a.komariURL != "" {
@@ -181,6 +184,7 @@ func main() {
 	mux.HandleFunc("/api/dashboard", a.dashboardHandler)
 	mux.HandleFunc("/api/komari/nodes", a.komariNodesHandler)
 	mux.HandleFunc("/api/komari/ping-history", a.komariPingHistoryHandler)
+	mux.HandleFunc("/api/preferences/monitor-order", a.monitorOrderHandler)
 	mux.HandleFunc("/api/operations/preview", a.previewHandler)
 	mux.HandleFunc("/api/operations/execute", a.executeHandler)
 	mux.HandleFunc("/api/jobs", a.jobsHandler)
