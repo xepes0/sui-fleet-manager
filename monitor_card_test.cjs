@@ -6,6 +6,8 @@ const vm = require('node:vm');
 const source = fs.readFileSync('web/monitor.js', 'utf8');
 const css = fs.readFileSync('web/monitor.css', 'utf8');
 const appCss = fs.readFileSync('web/style.css', 'utf8');
+const glassCss = fs.readFileSync('web/glass.css', 'utf8');
+const html = fs.readFileSync('web/index.html', 'utf8');
 const helpers = source.slice(source.indexOf('function monitorPercent('), source.indexOf('function monitorUptime('));
 
 function context() {
@@ -67,4 +69,25 @@ test('monitor home uses a unified grid with a region filter instead of per-regio
   assert.match(source, /monitorRegion === 'all'/);
   assert.doesNotMatch(source, /class="monitor-region"/);
   assert.match(html, /id="monitor-regions"/);
+});
+
+
+test('monitor toolbar exposes quick sorting and persistent custom ordering', () => {
+  assert.match(html, /id="monitor-sort"/);
+  assert.match(html, /<option value="custom">自定义<\/option>/);
+  assert.match(html, /<option value="latency">延迟<\/option>/);
+  assert.match(html, /id="monitor-order-reset"/);
+  assert.match(source, /api\('preferences\/monitor-order'/);
+  assert.match(source, /data-monitor-drag/);
+  assert.match(source, /monitorMergeVisibleOrder/);
+  assert.match(source, /monitorSortMode === 'custom'/);
+});
+
+test('liquid glass theme keeps dark translucent surfaces and blur', () => {
+  assert.match(html, /href="\/glass\.css"/);
+  assert.match(glassCss, /--glass-bg:/);
+  assert.match(glassCss, /backdrop-filter:blur\(18px\) saturate\(135%\)/);
+  assert.match(glassCss, /\.monitor-card::before/);
+  assert.match(glassCss, /\.monitor-card\.dragging/);
+  assert.match(glassCss, /\.monitor-drag-handle/);
 });
