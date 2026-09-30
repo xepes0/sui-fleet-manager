@@ -1,6 +1,15 @@
 let pingHistoryAt = 0;
 let pingHistoryLoading = false;
 let monitorRegion = 'all';
+let monitorOrder = [];
+let monitorSortMode = 'custom';
+let monitorDraggingUUID = '';
+let monitorOrderSaveChain = Promise.resolve();
+
+try {
+  const savedMode = localStorage.getItem('monitorSortMode');
+  if (['custom','default','name','region','latency','expiry'].includes(savedMode)) monitorSortMode = savedMode;
+} catch {}
 
 function monitorPercent(used, total) {
   const a = Number(used), b = Number(total);
@@ -19,7 +28,6 @@ function monitorLoadMeter(load) {
   const text = amount == null ? '—' : amount.toFixed(2);
   return `<div class="monitor-meter monitor-meter-load"><div class="monitor-meter-head"><span>负载</span><b>${esc(text)}</b></div><div class="monitor-meter-track"><i style="width:${width}%"></i></div></div>`;
 }
-
 
 function monitorLatencyClass(value) {
   const n = Number(value);
@@ -95,6 +103,78 @@ function monitorLink(uuid) {
   } catch { return ''; }
 }
 
+function monitorAverageLatency(node) {
+  const values = Object.values(node.status?.ping || {}).map(info => Number(info.latest)).filter(value => Number.isFinite(value) && value >= 0);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : Number.POSITIVE_INFINITY;
+}
+
+function monitorExpiryTimestamp(node) {
+  const value = new Date(node.expired_at).getTime();
+  return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+}
+
+function monitorFullOrder() {
+  const liveIDs = state.monitorNodes.map(node => String(node.uuid));
+  const liveSet = new Set(liveIDs);
+  const order = monitorOrder.filter(id => liveSet.has(id));
+  const known = new Set(order);
+  for (const id of liveIDs) if (!known.has(id)) order.push(id);
+  return order;
+}
+
+function monitorSortedNodes(nodes) {
+  const rows = [...nodes];
+  const byName = (a, b) => String(a.name || a.uuid).localeCompare(String(b.name || b.uuid), 'zh-CN', {numeric:true});
+  if (monitorSortMode === 'custom') {
+    const rank = new Map(monitorFullOrder().map((id, index) => [id, index]));
+    return rows.sort((a, b) => (rank.get(String(a.uuid)) ?? Number.MAX_SAFE_INTEGER) - (rank.get(String(b.uuid)) ?? Number.MAX_SAFE_INTEGER) || byName(a,b));
+  }
+  if (monitorSortMode === 'name') return rows.sort(byName);
+  if (monitorSortMode === 'region') return rows.sort((a,b) => String(a.region || '').localeCompare(String(b.region || ''), 'zh-CN') || byName(a,b));
+  if (monitorSortMode === 'latency') return rows.sort((a,b) => monitorAverageLatency(a) - monitorAverageLatency(b) || byName(a,b));
+  if (monitorSortMode === 'expiry') return rows.sort((a,b) => monitorExpiryTimestamp(a) - monitorExpiryTimestamp(b) || byName(a,b));
+  return rows;
+}
+
+function monitorMergeVisibleOrder(visibleOrder) {
+  const base = monitorFullOrder();
+  const visible = new Set(visibleOrder);
+  let next = 0;
+  return base.map(id => visible.has(id) ? visibleOrder[next++] : id);
+}
+
+function syncMonitorToolbar() {
+  const sort = $('monitor-sort');
+  if (sort && sort.value !== monitorSortMode) sort.value = monitorSortMode;
+  $('monitor-order-reset')?.classList.toggle('hidden', monitorOrder.length === 0);
+  $('monitor-order-hint')?.classList.toggle('hidden', monitorSortMode !== 'custom');
+}
+
+async function loadMonitorOrder() {
+  try {
+    const pref = await api('preferences/monitor-order');
+    monitorOrder = Array.isArray(pref.order) ? pref.order.map(String) : [];
+  } catch (error) {
+    console.warn('Monitor order:', error.message);
+  }
+  if (state.monitorNodes.length) renderMonitorHome();
+}
+
+function saveMonitorOrder() {
+  const snapshot = [...monitorOrder];
+  monitorOrderSaveChain = monitorOrderSaveChain.catch(() => {}).then(async () => {
+    try {
+      const saved = await api('preferences/monitor-order', {method:'PUT', body:JSON.stringify({order:snapshot})});
+      monitorOrder = Array.isArray(saved.order) ? saved.order.map(String) : snapshot;
+      syncMonitorToolbar();
+    } catch (error) {
+      notice('保存探针排序失败：' + error.message);
+      throw error;
+    }
+  });
+  return monitorOrderSaveChain;
+}
+
 function monitorCard(node) {
   const live = node.status || {};
   const linked = state.dashboard.find(row => row.server.komari_uuid === node.uuid);
@@ -111,8 +191,8 @@ function monitorCard(node) {
   const totalTraffic = live.net_total_up == null && live.net_total_down == null ? '—' : bytes((+live.net_total_up || 0) + (+live.net_total_down || 0));
   const expiry = monitorExpiry(node.expired_at), price = monitorPrice(node);
   const load = live.load == null ? null : Math.max(0, Number(live.load) || 0);
-  return `<article class="monitor-card ${online ? '' : 'offline'}" ${cardAction}>
-    <div class="monitor-card-head"><div class="monitor-name"><span class="monitor-region-flag">${esc(node.region || '🌐')}</span><div><h3>${esc(name)}</h3><small>${esc(node.cpu_name || node.os || 'Komari 探针')}</small></div></div>${status(online ? '在线' : '离线', online ? 'ok' : 'bad')}</div>
+  return `<article class="monitor-card ${online ? '' : 'offline'}" data-monitor-uuid="${esc(node.uuid)}" ${cardAction}>
+    <div class="monitor-card-head"><div class="monitor-head-main"><button type="button" class="monitor-drag-handle" data-monitor-drag draggable="true" aria-label="拖动调整顺序" title="拖动调整顺序">⋮⋮</button><div class="monitor-name"><span class="monitor-region-flag">${esc(node.region || '🌐')}</span><div><h3>${esc(name)}</h3><small>${esc(node.cpu_name || node.os || 'Komari 探针')}</small></div></div></div>${status(online ? '在线' : '离线', online ? 'ok' : 'bad')}</div>
     <div class="monitor-meters">${monitorMeter('CPU', cpu, 'cpu')}${monitorMeter('内存', mem, 'memory')}${monitorMeter('磁盘', disk, 'disk')}${monitorLoadMeter(load)}</div>
     <div class="monitor-facts">
       <div class="monitor-fact monitor-fact-traffic"><span>实时流量</span><b><em class="traffic-up">↑ ${esc(upload)}</em><em class="traffic-down">↓ ${esc(download)}</em></b></div>
@@ -129,18 +209,20 @@ function monitorCard(node) {
 
 function renderMonitorHome() {
   renderMonitorRegions();
+  syncMonitorToolbar();
   const term = ($('monitor-search').value || '').trim().toLowerCase();
-  const nodes = state.monitorNodes.filter(node => {
+  let nodes = state.monitorNodes.filter(node => {
     const matchesRegion = monitorRegion === 'all' || String(node.region || '其他').toUpperCase() === monitorRegion;
     const matchesTerm = !term || `${node.name || ''} ${node.region || ''} ${node.group || ''}`.toLowerCase().includes(term);
     return matchesRegion && matchesTerm;
   });
+  nodes = monitorSortedNodes(nodes);
   $('monitor-count').textContent = `显示 ${nodes.length} / ${state.monitorNodes.length} 台`;
   if (!state.monitorNodes.length) {
     $('server-list').innerHTML = state.dashboard.length ? `<div class="empty">Komari 探针数据暂不可用；下方仍可打开已登记的 S-UI 面板。</div><div class="monitor-grid">${state.dashboard.map(serverCard).join('')}</div>` : '<div class="empty">暂无探针。先检查 Komari 连接或添加 S-UI 面板。</div>';
     return;
   }
-  $('server-list').innerHTML = nodes.length ? `<div class="monitor-grid">${nodes.map(monitorCard).join('')}</div>` : '<div class="empty">没有匹配的服务器</div>';
+  $('server-list').innerHTML = nodes.length ? `<div class="monitor-grid ${monitorSortMode === 'custom' ? 'monitor-reorder' : ''}">${nodes.map(monitorCard).join('')}</div>` : '<div class="empty">没有匹配的服务器</div>';
 }
 
 async function loadPingHistory() {
@@ -170,3 +252,73 @@ $('monitor-regions')?.addEventListener('click', event => {
   monitorRegion = button.dataset.monitorRegion || 'all';
   renderMonitorHome();
 });
+
+$('monitor-sort')?.addEventListener('change', event => {
+  monitorSortMode = event.target.value;
+  try { localStorage.setItem('monitorSortMode', monitorSortMode); } catch {}
+  renderMonitorHome();
+});
+
+$('monitor-order-reset')?.addEventListener('click', async () => {
+  if (!confirm('恢复探针默认顺序？已保存的自定义顺序会被清空。')) return;
+  monitorOrder = [];
+  await saveMonitorOrder().catch(() => {});
+  renderMonitorHome();
+});
+
+document.addEventListener('click', event => {
+  if (event.target.closest('[data-monitor-drag]')) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}, true);
+
+$('server-list')?.addEventListener('dragstart', event => {
+  const handle = event.target.closest('[data-monitor-drag]');
+  if (!handle || monitorSortMode !== 'custom') {
+    event.preventDefault();
+    return;
+  }
+  const card = handle.closest('.monitor-card[data-monitor-uuid]');
+  if (!card) return;
+  monitorDraggingUUID = card.dataset.monitorUuid || '';
+  card.classList.add('dragging');
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', monitorDraggingUUID);
+});
+
+$('server-list')?.addEventListener('dragover', event => {
+  if (!monitorDraggingUUID || monitorSortMode !== 'custom') return;
+  const grid = event.target.closest('.monitor-grid.monitor-reorder');
+  const over = event.target.closest('.monitor-card[data-monitor-uuid]');
+  const dragging = grid?.querySelector('.monitor-card.dragging');
+  if (!grid || !over || !dragging || over === dragging) return;
+  event.preventDefault();
+  grid.querySelectorAll('.drag-over').forEach(card => card.classList.remove('drag-over'));
+  over.classList.add('drag-over');
+  const rect = over.getBoundingClientRect();
+  const verticalDelta = event.clientY - (rect.top + rect.height / 2);
+  const horizontalDelta = event.clientX - (rect.left + rect.width / 2);
+  const sameRow = Math.abs(verticalDelta) < rect.height * .45;
+  const before = sameRow ? horizontalDelta < 0 : verticalDelta < 0;
+  grid.insertBefore(dragging, before ? over : over.nextSibling);
+});
+
+$('server-list')?.addEventListener('dragend', async event => {
+  const card = event.target.closest('.monitor-card[data-monitor-uuid]');
+  if (card) card.classList.remove('dragging');
+  document.querySelectorAll('.monitor-card.drag-over').forEach(item => item.classList.remove('drag-over'));
+  if (!monitorDraggingUUID || monitorSortMode !== 'custom') {
+    monitorDraggingUUID = '';
+    return;
+  }
+  monitorDraggingUUID = '';
+  const visibleOrder = [...document.querySelectorAll('#server-list .monitor-grid .monitor-card[data-monitor-uuid]')].map(card => String(card.dataset.monitorUuid));
+  if (visibleOrder.length) {
+    monitorOrder = monitorMergeVisibleOrder(visibleOrder);
+    await saveMonitorOrder().catch(() => {});
+    renderMonitorHome();
+  }
+});
+
+loadMonitorOrder();
