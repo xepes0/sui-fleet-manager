@@ -21,7 +21,8 @@
 .monitor-card.offline { opacity: .72; }
 .monitor-card-head, .monitor-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .monitor-card-head { justify-content: space-between; align-items: start; }
-.monitor-name { align-items: start; }
+.monitor-head-main { display:flex; align-items:flex-start; gap:6px; min-width:0; }
+.monitor-name { align-items: start; flex:1 1 auto; }
 .monitor-region-flag { font-size: 18px; line-height: 1.25; flex: none; font-weight: 750; color: #dbe8ef; }
 .monitor-name > div { min-width: 0; }
 .monitor-name h3 { font-size: 15px; line-height: 1.25; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
