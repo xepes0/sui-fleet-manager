@@ -573,7 +573,7 @@ func executeExtended(ctx context.Context, a *app, s server, c change, req previe
 	if err != nil {
 		return backup, err
 	}
-	object, err := a.suiGet(ctx, s, endpoint)
+	object, err := a.suiGetAfterSave(ctx, s, endpoint)
 	if err != nil {
 		return backup, fmt.Errorf("save accepted, verification unavailable: %w", err)
 	}

@@ -487,7 +487,6 @@ func configDeletePayload(target string, item map[string]any) (json.RawMessage, e
 	}
 }
 
-
 func normalizeNewClientTemplate(template map[string]any) error {
 	if template == nil {
 		return errors.New("client data is required")
@@ -505,7 +504,6 @@ func normalizeNewClientTemplate(template map[string]any) error {
 	}
 	return nil
 }
-
 
 func clientDetailAfterSave(ctx context.Context, a *app, s server, summary map[string]any) (map[string]any, error) {
 	id, ok := summary["id"]
@@ -526,7 +524,7 @@ func clientDetailAfterSave(ctx context.Context, a *app, s server, summary map[st
 	if idText == "" {
 		return summary, nil
 	}
-	data, err := a.suiGet(ctx, s, "clients?id="+url.QueryEscape(idText))
+	data, err := a.suiGetAfterSave(ctx, s, "clients?id="+url.QueryEscape(idText))
 	if err != nil {
 		return nil, fmt.Errorf("save accepted, client detail verification unavailable: %w", err)
 	}
@@ -599,7 +597,6 @@ func verifyNewClientSaved(expected, actual map[string]any) error {
 	}
 	return nil
 }
-
 
 func collectTagReferences(value any, tag, path string, refs *[]string) {
 	if len(*refs) >= 4 {
@@ -957,7 +954,7 @@ func executeConfigSave(ctx context.Context, a *app, s server, c change, req prev
 	if err := a.suiPost(ctx, s, "save", url.Values{"object": {req.ConfigTarget}, "action": {mode}, "data": {string(payload)}}); err != nil {
 		return backup, err
 	}
-	updated, err := a.suiGet(ctx, s, req.ConfigTarget)
+	updated, err := a.suiGetAfterSave(ctx, s, req.ConfigTarget)
 	if err != nil {
 		return backup, fmt.Errorf("save accepted, verification unavailable; refresh panel connection if its address changed: %w", err)
 	}

@@ -1180,7 +1180,7 @@ func (a *app) verifySaved(ctx context.Context, s server, c change, req previewRe
 	if c.Action == "inbound_patch" {
 		endpoint = "inbounds"
 	}
-	obj, err := a.suiGet(ctx, s, endpoint)
+	obj, err := a.suiGetAfterSave(ctx, s, endpoint)
 	if err != nil {
 		return fmt.Errorf("save accepted, verification unavailable: %w", err)
 	}

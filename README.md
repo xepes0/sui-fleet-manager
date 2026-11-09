@@ -67,6 +67,8 @@ Route rules use match, action, target Outbound, and position controls. The rule 
 
 Configuration writes save a per-panel database backup before calling S-UI's `/apiv2/save`. S-UI may restart the sing-box core when it saves objects or core configuration, so review affected servers and rule order before executing.
 
+Post-save verification reconnects after transient EOF, connection reset/refusal, or network timeout errors, using up to five read attempts with short delays within the job deadline. This supports panels reached through a proxy core's fallback listener while that core reloads. Only verification GETs are retried; saves are never automatically repeated. Authentication, invalid JSON, certificate validation and configuration mismatches remain errors.
+
 ## Template and subscription safety
 
 The template library stores contents encrypted using the same `FLEET_MASTER_KEY` as panel Tokens. A rule-set template accepts only a public HTTPS hostname; applying it adds a remote rule-set to each selected S-UI core configuration. S-UI or sing-box downloads the rule-set after the change, so use a source you trust. Template application can restart sing-box.
