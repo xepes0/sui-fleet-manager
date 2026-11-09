@@ -24,7 +24,7 @@ function bcMoveRoute(from,to){
   bcResetPreview();bcRender();
 }
 function bcRouteOrderFields(){
-  return `<section class="batch-config-section"><h4>路由执行顺序</h4><p class="hint">从上到下匹配。使用按钮或序号调整，再生成逐台预览；此处操作尚未写入服务器。</p><ol class="batch-route-order">${bc.routeOrder.map((rule,index)=>`<li><div class="batch-route-order-title"><strong>${esc(bcRouteLabel(rule,index))}</strong><details><summary>查看规则</summary><pre>${esc(JSON.stringify(rule,null,2))}</pre></details></div><div class="batch-route-order-controls"><label>序号<input type="number" min="1" max="${bc.routeOrder.length}" value="${index+1}" data-bc-route-position="${index}" aria-label="第 ${index+1} 条规则的目标序号"></label>${[['置顶',0],['上移',index-1],['下移',index+1],['置底',bc.routeOrder.length-1]].map(([label,to])=>`<button type="button" class="secondary" data-bc-route-index="${index}" data-bc-route-move="${to}" ${to<0||to>=bc.routeOrder.length||to===index?'disabled':''} aria-label="第 ${index+1} 条规则${label}">${label}</button>`).join('')}</div></li>`).join('')}</ol></section>`;
+  return `<section class="batch-config-section"><h4>路由执行顺序</h4><p class="hint">从上到下匹配。使用按钮或序号调整，再生成逐台预览。可取消勾选各台不共用的规则；未勾选规则保持各台原位置。</p><ol class="batch-route-order">${bc.routeOrder.map((rule,index)=>`<li><div class="batch-route-order-title"><label class="batch-config-choice"><input type="checkbox" data-bc-route-include="${index}" ${bc.routeOrderExcluded?.has(rule)?'':'checked'} aria-label="第 ${index+1} 条规则参与批量排序"><strong>${esc(bcRouteLabel(rule,index))}</strong></label><details><summary>查看规则</summary><pre>${esc(JSON.stringify(rule,null,2))}</pre></details></div><div class="batch-route-order-controls"><label>序号<input type="number" min="1" max="${bc.routeOrder.length}" value="${index+1}" data-bc-route-position="${index}" aria-label="第 ${index+1} 条规则的目标序号"></label>${[['置顶',0],['上移',index-1],['下移',index+1],['置底',bc.routeOrder.length-1]].map(([label,to])=>`<button type="button" class="secondary" data-bc-route-index="${index}" data-bc-route-move="${to}" ${to<0||to>=bc.routeOrder.length||to===index?'disabled':''} aria-label="第 ${index+1} 条规则${label}">${label}</button>`).join('')}</div></li>`).join('')}</ol></section>`;
 }
 function bcRouteOrderPreview(change){
   return `<div class="batch-route-order-preview">${[['调整前',change.before],['调整后',change.after]].map(([title,rules])=>`<section><h4>${title}</h4><ol>${(rules||[]).map((rule,index)=>`<li>${esc(bcRouteLabel(rule,index))}</li>`).join('')}</ol></section>`).join('')}</div>`;
@@ -313,7 +313,7 @@ async function bcSelectionChanged(){
   bcRender();
 }
 function bcSelect(){
-  if(bc.tab==='routes'&&bc.mode==='order')bc.routeOrder=structuredClone(bcItems());
+  if(bc.tab==='routes'&&bc.mode==='order'){bc.routeOrder=structuredClone(bcItems());bc.routeOrderExcluded=new Set()}
   bcResetPreview();bc.ops.clear();bc.inboundVersion++;bc.clientTagsByServer={};bc.inboundOptions={};bc.inboundLoading=false;const singleton=['config','settings'].includes(bc.tab),item=singleton?bc.data?.[bc.tab]:bcItems()[bc.index];bc.original=item==null?null:structuredClone(item);bc.form=item==null?null:structuredClone(item);
   bc.tlsName=bcTLSList().find(t=>t.id===bc.form?.tls_id)?.name||'none';bc.publicAddrs={};bc.inboundCopy=false;bc.sourceTag='';bc.copyOriginal=null;bc.routeText=bc.tab==='routes'&&bc.form?JSON.stringify(bc.form,null,2):'';bcRender();
 }
@@ -431,7 +431,7 @@ function bcMark(path,op='set'){
 function bcRequest(){
   const ids=bcSelected();if(!ids.length)throw Error('请先选择服务器');
   if(bc.tab==='routes'){
-    if(bc.mode==='order')return {server_ids:ids,action:'route_rule_reorder',route_order:structuredClone(bc.routeOrder)};
+    if(bc.mode==='order')return {server_ids:ids,action:'route_rule_reorder',route_order:structuredClone(bc.routeOrder.filter(rule=>!bc.routeOrderExcluded?.has(rule)))};
     if(bc.mode==='new')return {server_ids:ids,action:'route_rule_add',route_rule:bcRouteCurrentRule(),route_position:'last'};
     if(!bc.original)throw Error('请选择路由规则');
     if(bc.mode==='del')return {server_ids:ids,action:'route_rule_delete',route_match:structuredClone(bc.original)};
@@ -500,6 +500,7 @@ document.addEventListener('click',event=>{
   const add=event.target.closest('[data-bc-add]');if(add){const row=add.closest('[data-bc-container]'),path=JSON.parse(decodeURIComponent(row.dataset.bcContainer)),parent=path.length?bcRead(path):bc.form,type=row.querySelector('[data-bc-type]').value,key=row.querySelector('[data-bc-key]').value.trim();if(!parent||Array.isArray(parent)){bcError('请在对象中添加字段；列表请先在单机完整配置中调整');return}if(!key||['__proto__','prototype','constructor','id'].includes(key)||Object.hasOwn(parent,key)){bcError('请输入一个新的有效字段名');return}parent[key]=bcDefault(type);if(bc.mode==='edit')bcMark([...path,key]);bcRender();const extra=[...document.querySelectorAll('[data-bc-extra-path]')].find(item=>item.dataset.bcExtraPath===row.dataset.bcContainer);if(extra)extra.open=true;return}
 });
 document.addEventListener('change',event=>{
+  if(event.target.matches('[data-bc-route-include]')){bc.routeOrderExcluded??=new Set();const rule=bc.routeOrder[Number(event.target.dataset.bcRouteInclude)];event.target.checked?bc.routeOrderExcluded.delete(rule):bc.routeOrderExcluded.add(rule);bcResetPreview();return}
   if(event.target.matches('[data-bc-route-position]')){bcMoveRoute(Number(event.target.dataset.bcRoutePosition),Number(event.target.value)-1);return}
   if(event.target.matches('[data-bc-route-toggle]')){bcRouteToggleGroup(event.target.dataset.bcRouteToggle,event.target.checked);return}
   if(event.target.matches('[data-bc-route-subgroup]')){bcRouteSwitchSubgroup(event.target.dataset.bcRouteSubgroup,event.target.value);return}
