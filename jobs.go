@@ -326,7 +326,7 @@ func (a *app) executeChange(parent context.Context, p preview, c change) outcome
 		if e == nil {
 			e = a.verifySaved(ctx, s, c, p.Request)
 		}
-	case "inbound_create", "outbound_create", "outbound_patch", "route_rule_add", "route_rule_replace", "route_rule_delete":
+	case "inbound_create", "outbound_create", "outbound_patch", "route_rule_add", "route_rule_replace", "route_rule_delete", "route_rule_reorder":
 		o.Backup, e = executeExtended(ctx, a, s, c, p.Request)
 	case "config_save":
 		o.Backup, e = executeConfigSave(ctx, a, s, c, p.Request)

@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"net/url"
 	"reflect"
+	"sort"
 	"strings"
 )
 
 func isExtendedAction(action string) bool {
 	switch action {
-	case "inbound_create", "outbound_create", "outbound_patch", "route_rule_add", "route_rule_replace", "route_rule_delete":
+	case "inbound_create", "outbound_create", "outbound_patch", "route_rule_add", "route_rule_replace", "route_rule_delete", "route_rule_reorder":
 		return true
 	}
 	return false
@@ -34,8 +35,50 @@ func hasRouteMatch(raw json.RawMessage) bool {
 	return value != "" && value != "null"
 }
 
+// Reuse each panel's own rule objects and only fill the selected rules' slots.
+// Rules unique to that panel retain both their content and position.
+func reorderRouteRules(rules []any, order []json.RawMessage) ([]any, error) {
+	positions := make([]int, 0, len(order))
+	selected := make([]any, 0, len(order))
+	seen := map[int]bool{}
+	for _, raw := range order {
+		index, err := matchedRouteIndex(rules, raw)
+		if err != nil {
+			return nil, err
+		}
+		if seen[index] {
+			return nil, errors.New("route order contains duplicate rules")
+		}
+		seen[index] = true
+		positions = append(positions, index)
+		selected = append(selected, rules[index])
+	}
+	sort.Ints(positions)
+	after := append([]any{}, rules...)
+	for index, position := range positions {
+		after[position] = selected[index]
+	}
+	return after, nil
+}
+
 func validateExtendedRequest(req previewRequest) error {
 	switch req.Action {
+	case "route_rule_reorder":
+		if len(req.RouteOrder) < 2 || len(req.RouteOrder) > 1000 {
+			return errors.New("select 2 to 1000 route rules to reorder")
+		}
+		seen := map[string]bool{}
+		for _, raw := range req.RouteOrder {
+			rule, err := decodeObject(raw, "route order rule")
+			if err != nil {
+				return err
+			}
+			key := string(mustJSON(rule))
+			if seen[key] {
+				return errors.New("route order contains duplicate rules")
+			}
+			seen[key] = true
+		}
 	case "inbound_create", "outbound_create":
 		if strings.TrimSpace(req.SourceTag) != "" {
 			patch, err := decodeObject(req.ObjectOverrides, "object overrides")
@@ -333,7 +376,7 @@ func previewExtended(ctx context.Context, a *app, s server, req previewRequest, 
 		if fingerprint(c.After) == c.Fingerprint {
 			c.Error = "no fields changed"
 		}
-	case "route_rule_add", "route_rule_replace", "route_rule_delete":
+	case "route_rule_add", "route_rule_replace", "route_rule_delete", "route_rule_reorder":
 		object, err := a.suiGet(ctx, s, "config")
 		if err != nil {
 			c.Error = err.Error()
@@ -345,7 +388,7 @@ func previewExtended(ctx context.Context, a *app, s server, req previewRequest, 
 			return
 		}
 		var rule map[string]any
-		if req.Action != "route_rule_delete" {
+		if req.Action != "route_rule_delete" && req.Action != "route_rule_reorder" {
 			_ = json.Unmarshal(req.RouteRule, &rule)
 			if err := a.validateRouteTarget(ctx, s, rule); err != nil {
 				c.Error = err.Error()
@@ -365,6 +408,12 @@ func previewExtended(ctx context.Context, a *app, s server, req previewRequest, 
 			index = *req.RouteIndex
 		}
 		switch req.Action {
+		case "route_rule_reorder":
+			after, err = reorderRouteRules(rules, req.RouteOrder)
+			if err != nil {
+				c.Error = err.Error()
+				return
+			}
 		case "route_rule_add":
 			if req.RoutePosition == "last" {
 				index = len(after)
@@ -432,7 +481,7 @@ func executeExtended(ctx context.Context, a *app, s server, c change, req previe
 			action = "new"
 		}
 		payload = c.After
-	case "route_rule_add", "route_rule_replace", "route_rule_delete":
+	case "route_rule_add", "route_rule_replace", "route_rule_delete", "route_rule_reorder":
 		endpoint, action, payload = "config", "edit", c.Payload
 		object, err := a.suiGet(ctx, s, endpoint)
 		if err != nil {

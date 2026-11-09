@@ -77,6 +77,7 @@ type previewRequest struct {
 	ObjectPatch            json.RawMessage             `json:"object_patch"`
 	RouteRule              json.RawMessage             `json:"route_rule"`
 	RouteMatch             json.RawMessage             `json:"route_match"`
+	RouteOrder             []json.RawMessage           `json:"route_order"`
 	RouteIndex             *int                        `json:"route_index"`
 	RoutePosition          string                      `json:"route_position"`
 	ConfigTarget           string                      `json:"config_target"`
@@ -879,7 +880,7 @@ func (a *app) previewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Action {
-	case "backup", "restartSb", "client_enable", "client_disable", "client_create", "inbound_patch", "inbound_create", "outbound_create", "outbound_patch", "route_rule_add", "route_rule_replace", "route_rule_delete", "config_save", "rule_set_apply":
+	case "backup", "restartSb", "client_enable", "client_disable", "client_create", "inbound_patch", "inbound_create", "outbound_create", "outbound_patch", "route_rule_add", "route_rule_replace", "route_rule_delete", "route_rule_reorder", "config_save", "rule_set_apply":
 	default:
 		apiError(w, 400, errors.New("unsupported action"))
 		return

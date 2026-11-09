@@ -1,4 +1,4 @@
-const bc={tab:'inbounds',mode:'edit',source:null,data:null,index:0,form:null,original:null,ops:new Map(),preview:null,version:0,tlsName:'none',publicAddrs:{},inboundCopy:false,sourceTag:'',copyOriginal:null,inboundOptions:{},clientTagsByServer:{},inboundLoading:false,inboundVersion:0,routeText:''};
+const bc={tab:'inbounds',mode:'edit',source:null,data:null,index:0,form:null,original:null,ops:new Map(),preview:null,version:0,tlsName:'none',publicAddrs:{},inboundCopy:false,sourceTag:'',copyOriginal:null,inboundOptions:{},clientTagsByServer:{},inboundLoading:false,inboundVersion:0,routeText:'',routeOrder:[]};
 const bcKey=path=>JSON.stringify(path);
 const bcPath=path=>encodeURIComponent(JSON.stringify(path));
 const bcRead=path=>path.reduce((value,key)=>value?.[key],bc.form);
@@ -16,6 +16,18 @@ function bcRouteLabel(rule,index){
 function bcObjectLabel(item,index){
   if(bc.tab==='routes')return bcRouteLabel(item,index);
   return `${item.name||item.tag||'#'+item.id} · ${item.type||''}`;
+}
+function bcMoveRoute(from,to){
+  if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||from>=bc.routeOrder.length||to<0||to>=bc.routeOrder.length){bcError('请输入有效的规则序号');bcRender();return}
+  if(from===to)return;
+  const [rule]=bc.routeOrder.splice(from,1);bc.routeOrder.splice(to,0,rule);
+  bcResetPreview();bcRender();
+}
+function bcRouteOrderFields(){
+  return `<section class="batch-config-section"><h4>路由执行顺序</h4><p class="hint">从上到下匹配。使用按钮或序号调整，再生成逐台预览；此处操作尚未写入服务器。</p><ol class="batch-route-order">${bc.routeOrder.map((rule,index)=>`<li><div class="batch-route-order-title"><strong>${esc(bcRouteLabel(rule,index))}</strong><details><summary>查看规则</summary><pre>${esc(JSON.stringify(rule,null,2))}</pre></details></div><div class="batch-route-order-controls"><label>序号<input type="number" min="1" max="${bc.routeOrder.length}" value="${index+1}" data-bc-route-position="${index}" aria-label="第 ${index+1} 条规则的目标序号"></label>${[['置顶',0],['上移',index-1],['下移',index+1],['置底',bc.routeOrder.length-1]].map(([label,to])=>`<button type="button" class="secondary" data-bc-route-index="${index}" data-bc-route-move="${to}" ${to<0||to>=bc.routeOrder.length||to===index?'disabled':''} aria-label="第 ${index+1} 条规则${label}">${label}</button>`).join('')}</div></li>`).join('')}</ol></section>`;
+}
+function bcRouteOrderPreview(change){
+  return `<div class="batch-route-order-preview">${[['调整前',change.before],['调整后',change.after]].map(([title,rules])=>`<section><h4>${title}</h4><ol>${(rules||[]).map((rule,index)=>`<li>${esc(bcRouteLabel(rule,index))}</li>`).join('')}</ol></section>`).join('')}</div>`;
 }
 const bcRouteGroups={
   inbound:{label:'入站管理',keys:['inbound'],defaults:{inbound:[]}},
@@ -301,6 +313,7 @@ async function bcSelectionChanged(){
   bcRender();
 }
 function bcSelect(){
+  if(bc.tab==='routes'&&bc.mode==='order')bc.routeOrder=structuredClone(bcItems());
   bcResetPreview();bc.ops.clear();bc.inboundVersion++;bc.clientTagsByServer={};bc.inboundOptions={};bc.inboundLoading=false;const singleton=['config','settings'].includes(bc.tab),item=singleton?bc.data?.[bc.tab]:bcItems()[bc.index];bc.original=item==null?null:structuredClone(item);bc.form=item==null?null:structuredClone(item);
   bc.tlsName=bcTLSList().find(t=>t.id===bc.form?.tls_id)?.name||'none';bc.publicAddrs={};bc.inboundCopy=false;bc.sourceTag='';bc.copyOriginal=null;bc.routeText=bc.tab==='routes'&&bc.form?JSON.stringify(bc.form,null,2):'';bcRender();
 }
@@ -376,13 +389,13 @@ function bcRender(){
   const box=$('batch-config-content');if(!bc.data){box.innerHTML='<p class="muted">请选择服务器。</p>';return}
   if(bc.data.errors?.[bc.tab]){box.innerHTML=`<p class="error">${esc(bc.data.errors[bc.tab])}</p>`;return}
   const singleton=['config','settings'].includes(bc.tab),items=bcItems(),name=bcTabs.find(x=>x[0]===bc.tab)?.[1];
-  const selector=singleton?'':`<div class="batch-config-object-bar"><label>配置对象<select id="batch-config-object">${items.map((item,i)=>`<option value="${i}" ${i===bc.index?'selected':''}>${esc(bcObjectLabel(item,i))}</option>`).join('')}</select></label><button id="batch-config-new" class="secondary">＋ 新增${esc(name)}${bc.tab==='routes'?'规则':''}</button></div>`;
-  const mode=singleton?'':`<div class="batch-config-mode"><button data-bc-mode="edit" class="${bc.mode==='edit'?'active':''}">修改字段</button><button data-bc-mode="new" class="${bc.mode==='new'?'active':''}">新增对象</button><button data-bc-mode="del" class="${bc.mode==='del'?'active':''}">删除对象</button></div>`;
+  const selector=singleton||bc.mode==='order'?'':`<div class="batch-config-object-bar"><label>配置对象<select id="batch-config-object">${items.map((item,i)=>`<option value="${i}" ${i===bc.index?'selected':''}>${esc(bcObjectLabel(item,i))}</option>`).join('')}</select></label><button id="batch-config-new" class="secondary">＋ 新增${esc(name)}${bc.tab==='routes'?'规则':''}</button></div>`;
+  const mode=singleton?'':`<div class="batch-config-mode"><button data-bc-mode="edit" class="${bc.mode==='edit'?'active':''}">修改字段</button><button data-bc-mode="new" class="${bc.mode==='new'?'active':''}">新增对象</button><button data-bc-mode="del" class="${bc.mode==='del'?'active':''}">删除对象</button>${bc.tab==='routes'?`<button data-bc-mode="order" class="${bc.mode==='order'?'active':''}">调整顺序</button>`:''}</div>`;
   if(!bc.form&&bc.mode!=='new'){box.innerHTML=selector+mode+'<div class="empty">此类还没有对象。点击新增开始配置。</div>';return}
-  const intro=bc.tab==='routes'?(bc.mode==='new'?'将在每台服务器的路由列表末尾追加此规则。':bc.mode==='del'?'会按完整原规则内容逐台匹配并预览删除；顺序不同也不会误删。':'会按完整原规则内容逐台匹配，再用下面的新规则替换。'):bc.mode==='new'&&bc.tab==='inbounds'?'入站负责监听和订阅公开地址；用户密码或 UUID 在“用户”里设置。':bc.mode==='new'&&bc.tab==='clients'?'先选择可用入站，再填写对应协议凭据；预览会逐台匹配入站。':bc.mode==='new'?'将用下面的表单在每台服务器新建对象。':bc.mode==='del'?'将按名称或 Tag 在每台服务器定位对象并分别预览删除。':bc.tab==='settings'?'勾选要同步的设置值；未勾选的设置保持各服务器原值。':['inbounds','outbounds','endpoints','services'].includes(bc.tab)?'勾选要批量修改的字段；修改 Tag 时会逐台检查重名和配置引用。':'勾选要批量修改的字段；未勾选的字段保持各服务器原值。';
+  const intro=bc.tab==='routes'?(bc.mode==='order'?'调整后的顺序将逐台匹配规则内容；服务器独有规则保留原位置。':bc.mode==='new'?'将在每台服务器的路由列表末尾追加此规则。':bc.mode==='del'?'会按完整原规则内容逐台匹配并预览删除；顺序不同也不会误删。':'会按完整原规则内容逐台匹配，再用下面的新规则替换。'):bc.mode==='new'&&bc.tab==='inbounds'?'入站负责监听和订阅公开地址；用户密码或 UUID 在“用户”里设置。':bc.mode==='new'&&bc.tab==='clients'?'先选择可用入站，再填写对应协议凭据；预览会逐台匹配入站。':bc.mode==='new'?'将用下面的表单在每台服务器新建对象。':bc.mode==='del'?'将按名称或 Tag 在每台服务器定位对象并分别预览删除。':bc.tab==='settings'?'勾选要同步的设置值；未勾选的设置保持各服务器原值。':['inbounds','outbounds','endpoints','services'].includes(bc.tab)?'勾选要批量修改的字段；修改 Tag 时会逐台检查重名和配置引用。':'勾选要批量修改的字段；未勾选的字段保持各服务器原值。';
   const shortcut=bc.mode==='new'&&bc.tab==='inbounds'?'<button id="batch-config-client-shortcut" class="secondary" type="button">下一步：创建用户与凭据</button>':'';
-  const fields=bc.mode==='del'?`<div class="batch-config-danger">将删除 ${bc.tab==='routes'?esc(bcRouteLabel(bc.original,bc.index)):esc(bc.original?.name||bc.original?.tag||'对象')}。预览会逐台检查。</div>`:bc.tab==='routes'?bcRouteFields():bc.mode==='new'&&bc.tab==='clients'?bcClientNewFields():bc.mode==='new'&&bc.tab==='inbounds'?bcInboundNewFields():bc.mode==='edit'&&['clients','inbounds'].includes(bc.tab)?bcGuidedEditFields():bcFields(bc.form,[],0);
-  const countText=bc.tab==='routes'?(bc.mode==='new'?'新增路由规则':bc.mode==='del'?'删除路由规则':'替换整条路由规则'):(bc.mode==='new'?'新建对象':bc.ops.size+' 项字段变更');
+  const fields=bc.tab==='routes'&&bc.mode==='order'?bcRouteOrderFields():bc.mode==='del'?`<div class="batch-config-danger">将删除 ${bc.tab==='routes'?esc(bcRouteLabel(bc.original,bc.index)):esc(bc.original?.name||bc.original?.tag||'对象')}。预览会逐台检查。</div>`:bc.tab==='routes'?bcRouteFields():bc.mode==='new'&&bc.tab==='clients'?bcClientNewFields():bc.mode==='new'&&bc.tab==='inbounds'?bcInboundNewFields():bc.mode==='edit'&&['clients','inbounds'].includes(bc.tab)?bcGuidedEditFields():bcFields(bc.form,[],0);
+  const countText=bc.tab==='routes'?(bc.mode==='order'?'调整路由顺序':bc.mode==='new'?'新增路由规则':bc.mode==='del'?'删除路由规则':'替换整条路由规则'):(bc.mode==='new'?'新建对象':bc.ops.size+' 项字段变更');
   box.innerHTML=`${selector}${mode}<p class="hint">参考 ${esc(bc.source?.name||'第一台服务器')} 的当前配置。${intro}</p>${shortcut}${fields}<div class="batch-config-actions"><span id="batch-config-count">${countText}</span><button id="batch-config-review" class="primary">生成逐台预览</button></div>`;
 }
 function bcFields(object,path,depth){
@@ -418,6 +431,7 @@ function bcMark(path,op='set'){
 function bcRequest(){
   const ids=bcSelected();if(!ids.length)throw Error('请先选择服务器');
   if(bc.tab==='routes'){
+    if(bc.mode==='order')return {server_ids:ids,action:'route_rule_reorder',route_order:structuredClone(bc.routeOrder)};
     if(bc.mode==='new')return {server_ids:ids,action:'route_rule_add',route_rule:bcRouteCurrentRule(),route_position:'last'};
     if(!bc.original)throw Error('请选择路由规则');
     if(bc.mode==='del')return {server_ids:ids,action:'route_rule_delete',route_match:structuredClone(bc.original)};
@@ -455,7 +469,7 @@ async function bcPreview(){
   let request;try{request=bcRequest()}catch(e){bcError(e.message);return}
   const button=$('batch-config-review');button.disabled=true;bcResetPreview();
   try{const preview=await api('operations/preview',{method:'POST',body:JSON.stringify(request)});bc.preview=preview;const box=$('batch-config-preview');box.classList.remove('hidden');const ready=preview.changes.filter(c=>!c.error).length;
-    box.innerHTML=`<div class="batch-config-work-head"><h3>3. 逐台预览 · ${ready} / ${preview.changes.length} 可执行</h3><span class="hint">有效期至 ${esc(date(preview.expires))}</span></div><p class="hint">执行前会逐台核对配置版本并备份数据库。请检查每台服务器的实际变化。</p>${preview.changes.map(c=>{const before=c.before,after=c.after,rows=fcChanges(before,after);return `<div class="batch-config-preview-row"><div><strong>${esc(c.server_name||'#'+c.server_id)}</strong>${status(c.error?'不可执行':'可执行',c.error?'bad':'ok')}</div>${c.error?`<p class="error">${esc(c.error)}</p>`:`<div class="full-config-diff">${rows.join('')||'<p>新建或删除整个对象</p>'}</div>`}</div>`}).join('')}<div class="batch-config-actions"><button id="batch-config-execute" class="primary" ${ready?'':'disabled'}>执行 ${ready} 台可用项</button></div>`;box.scrollIntoView({block:'start'});
+    box.innerHTML=`<div class="batch-config-work-head"><h3>3. 逐台预览 · ${ready} / ${preview.changes.length} 可执行</h3><span class="hint">有效期至 ${esc(date(preview.expires))}</span></div><p class="hint">执行前会逐台核对配置版本并备份数据库。请检查每台服务器的实际变化。</p>${preview.changes.map(c=>{const before=c.before,after=c.after,rows=fcChanges(before,after);return `<div class="batch-config-preview-row"><div><strong>${esc(c.server_name||'#'+c.server_id)}</strong>${status(c.error?'不可执行':'可执行',c.error?'bad':'ok')}</div>${c.error?`<p class="error">${esc(c.error)}</p>`:`<div class="full-config-diff">${c.action==='route_rule_reorder'?bcRouteOrderPreview(c):rows.join('')||'<p>新建或删除整个对象</p>'}</div>`}</div>`}).join('')}<div class="batch-config-actions"><button id="batch-config-execute" class="primary" ${ready?'':'disabled'}>执行 ${ready} 台可用项</button></div>`;box.scrollIntoView({block:'start'});
   }catch(e){bcError('预览失败：'+e.message)}finally{button.disabled=false}
 }
 async function bcExecute(){
@@ -475,6 +489,7 @@ document.addEventListener('click',event=>{
   if(event.target.closest('#batch-config-reload')){bcLoad();return}
   if(event.target.closest('#batch-config-new')){bcNew();return}
   if(event.target.closest('#batch-config-client-shortcut')){bc.tab='clients';bcNew();return}
+  const move=event.target.closest('[data-bc-route-move]');if(move){bcMoveRoute(Number(move.dataset.bcRouteIndex),Number(move.dataset.bcRouteMove));return}
   const mode=event.target.closest('[data-bc-mode]');if(mode){if(mode.dataset.bcMode==='new')bcNew();else{bc.mode=mode.dataset.bcMode;bcSelect();}return}
   if(event.target.closest('#bc-route-json-apply')){try{bc.form=bcRouteRuleFromText();bcRouteSyncText();bcResetPreview();bcRender()}catch(e){bcError(e.message)}return}
   if(event.target.closest('#batch-config-review')){bcPreview();return}
@@ -485,6 +500,7 @@ document.addEventListener('click',event=>{
   const add=event.target.closest('[data-bc-add]');if(add){const row=add.closest('[data-bc-container]'),path=JSON.parse(decodeURIComponent(row.dataset.bcContainer)),parent=path.length?bcRead(path):bc.form,type=row.querySelector('[data-bc-type]').value,key=row.querySelector('[data-bc-key]').value.trim();if(!parent||Array.isArray(parent)){bcError('请在对象中添加字段；列表请先在单机完整配置中调整');return}if(!key||['__proto__','prototype','constructor','id'].includes(key)||Object.hasOwn(parent,key)){bcError('请输入一个新的有效字段名');return}parent[key]=bcDefault(type);if(bc.mode==='edit')bcMark([...path,key]);bcRender();const extra=[...document.querySelectorAll('[data-bc-extra-path]')].find(item=>item.dataset.bcExtraPath===row.dataset.bcContainer);if(extra)extra.open=true;return}
 });
 document.addEventListener('change',event=>{
+  if(event.target.matches('[data-bc-route-position]')){bcMoveRoute(Number(event.target.dataset.bcRoutePosition),Number(event.target.value)-1);return}
   if(event.target.matches('[data-bc-route-toggle]')){bcRouteToggleGroup(event.target.dataset.bcRouteToggle,event.target.checked);return}
   if(event.target.matches('[data-bc-route-subgroup]')){bcRouteSwitchSubgroup(event.target.dataset.bcRouteSubgroup,event.target.value);return}
   if(event.target.matches('[data-bc-route-action]')){
