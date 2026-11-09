@@ -78,6 +78,7 @@ type previewRequest struct {
 	RouteRule              json.RawMessage             `json:"route_rule"`
 	RouteMatch             json.RawMessage             `json:"route_match"`
 	RouteOrder             []json.RawMessage           `json:"route_order"`
+	RouteMoves             []routeMove                 `json:"route_moves"`
 	RouteIndex             *int                        `json:"route_index"`
 	RoutePosition          string                      `json:"route_position"`
 	ConfigTarget           string                      `json:"config_target"`

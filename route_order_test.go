@@ -29,6 +29,39 @@ func TestRouteReorderPreservesPanelOnlySlots(t *testing.T) {
 	}
 }
 
+func TestMoveOnlySharedRuleAcrossDifferentPanels(t *testing.T) {
+	shared := map[string]any{"action": "route", "domain_suffix": []any{"shared.example"}, "outbound": "proxy"}
+	privateA := map[string]any{"action": "route", "inbound": []any{"panel-a"}, "outbound": "direct"}
+	privateB := map[string]any{"action": "route", "auth_user": []any{"panel-b-user"}, "outbound": "direct"}
+	sniff := map[string]any{"action": "sniff"}
+	moves := []routeMove{{Rule: mustJSON(shared), Kind: "first"}}
+	for _, before := range [][]any{{privateA, sniff, shared}, {sniff, privateB, shared, privateA}} {
+		after, err := movePanelRouteRules(before, moves)
+		if err != nil {
+			t.Fatal(err)
+		}
+		remaining := []any{}
+		for _, rule := range before {
+			if !reflect.DeepEqual(rule, shared) {
+				remaining = append(remaining, rule)
+			}
+		}
+		if !reflect.DeepEqual(after[0], shared) || !reflect.DeepEqual(after[1:], remaining) {
+			t.Fatalf("private rules changed: %v", after)
+		}
+	}
+	after, err := movePanelRouteRules([]any{shared, privateA, privateB}, []routeMove{{Rule: mustJSON(shared), Kind: "last"}})
+	if err != nil || !reflect.DeepEqual(after, []any{privateA, privateB, shared}) {
+		t.Fatalf("last: %v %v", after, err)
+	}
+	if _, err := movePanelRouteRules([]any{privateA}, moves); err == nil {
+		t.Fatal("missing moved rule accepted")
+	}
+	if _, err := movePanelRouteRules([]any{shared, shared}, moves); err == nil {
+		t.Fatal("ambiguous moved rule accepted")
+	}
+}
+
 func TestRouteReorderPreviewBackupStaleAndSave(t *testing.T) {
 	app := testApp(t)
 	first := map[string]any{"action": "sniff"}
@@ -56,7 +89,7 @@ func TestRouteReorderPreviewBackupStaleAndSave(t *testing.T) {
 	}))
 	defer panel.Close()
 	id := addTestServer(t, app, panel.URL)
-	req := previewRequest{ServerIDs: []int64{id}, Action: "route_rule_reorder", RouteOrder: []json.RawMessage{mustJSON(last), mustJSON(first)}}
+	req := previewRequest{ServerIDs: []int64{id}, Action: "route_rule_reorder", RouteMoves: []routeMove{{Rule: mustJSON(last), Kind: "first"}}}
 	getPreview := func() preview {
 		w := postJSON(t, app.previewHandler, "/api/operations/preview", req)
 		var p preview
