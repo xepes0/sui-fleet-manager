@@ -4,6 +4,28 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const batchSource = fs.readFileSync('web/batch-config.js', 'utf8');
+
+test('route order controls move complete rules and submit an order preview', () => {
+  const context = {fcTabs:[],structuredClone,esc:value=>String(value??''),bc:{tab:'routes',mode:'order',routeOrder:[{action:'sniff',timeout:'2s'},{action:'hijack-dns'},{action:'reject'}]},bcResetPreview:()=>{},bcRender:()=>{},bcError:message=>{throw Error(message)},bcSelected:()=>[1,2]};
+  vm.createContext(context);
+  vm.runInContext(batchSource.slice(batchSource.indexOf('const bcTabs='),batchSource.indexOf('const bcDefault=')),context);
+  context.bcMoveRoute(0,2);
+  assert.equal(context.bc.routeOrder[2].timeout,'2s');
+  context.bcMoveRoute(2,0);
+  assert.equal(context.bc.routeOrder[0].action,'sniff');
+  assert.throws(()=>context.bcMoveRoute(0,9),/有效/);
+  const html=context.bcRouteOrderFields();
+  for(const label of ['上移','下移','置顶','置底','目标序号'])assert.ok(html.includes(label));
+  vm.runInContext(batchSource.slice(batchSource.indexOf('function bcRequest()'),batchSource.indexOf('async function bcPreview()')),context);
+  const request=context.bcRequest();
+  assert.equal(request.action,'route_rule_reorder');
+  context.bc.routeOrderExcluded=new Set([context.bc.routeOrder[1]]);
+  assert.equal(context.bcRequest().route_order.length,2);
+  context.bc.routeOrderExcluded.clear();
+  assert.deepEqual(JSON.parse(JSON.stringify(request.route_order)),context.bc.routeOrder);
+  const preview=context.bcRouteOrderPreview({before:context.bc.routeOrder,after:[...context.bc.routeOrder].reverse()});
+  assert.ok(preview.includes('调整前')&&preview.includes('调整后'));
+});
 const batchFunctions = batchSource.slice(batchSource.indexOf('const bcOutboundTypes='), batchSource.indexOf('function bcResetPreview('));
 const batch = {structuredClone};
 batch.crypto = require('node:crypto').webcrypto;
