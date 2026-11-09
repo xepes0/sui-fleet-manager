@@ -35,6 +35,51 @@ func hasRouteMatch(raw json.RawMessage) bool {
 	return value != "" && value != "null"
 }
 
+type routeMove struct {
+	Rule     json.RawMessage `json:"rule"`
+	Kind     string          `json:"kind"`
+	Position int             `json:"position,omitempty"`
+}
+
+func movePanelRouteRules(rules []any, moves []routeMove) ([]any, error) {
+	after := append([]any{}, rules...)
+	for _, move := range moves {
+		from, err := matchedRouteIndex(after, move.Rule)
+		if err != nil {
+			return nil, fmt.Errorf("moved rule: %w", err)
+		}
+		to := move.Position
+		switch move.Kind {
+		case "first":
+			to = 0
+		case "last":
+			to = len(after) - 1
+		case "up":
+			to = from - 1
+			if to < 0 {
+				to = 0
+			}
+		case "down":
+			to = from + 1
+			if to >= len(after) {
+				to = len(after) - 1
+			}
+		case "position":
+		default:
+			return nil, errors.New("unsupported route move")
+		}
+		if to < 0 || to >= len(after) {
+			return nil, errors.New("target position exceeds this panel's route count")
+		}
+		item := after[from]
+		after = append(after[:from], after[from+1:]...)
+		after = append(after, nil)
+		copy(after[to+1:], after[to:])
+		after[to] = item
+	}
+	return after, nil
+}
+
 // Reuse each panel's own rule objects and only fill the selected rules' slots.
 // Rules unique to that panel retain both their content and position.
 func reorderRouteRules(rules []any, order []json.RawMessage) ([]any, error) {
@@ -64,6 +109,26 @@ func reorderRouteRules(rules []any, order []json.RawMessage) ([]any, error) {
 func validateExtendedRequest(req previewRequest) error {
 	switch req.Action {
 	case "route_rule_reorder":
+		if len(req.RouteMoves) > 0 {
+			if len(req.RouteOrder) > 0 || len(req.RouteMoves) > 1000 {
+				return errors.New("provide up to 1000 moves without a full order")
+			}
+			for _, move := range req.RouteMoves {
+				if _, err := decodeObject(move.Rule, "moved route rule"); err != nil {
+					return err
+				}
+				switch move.Kind {
+				case "first", "last", "up", "down":
+				case "position":
+					if move.Position < 0 || move.Position > 1000 {
+						return errors.New("invalid route position")
+					}
+				default:
+					return errors.New("unsupported route move")
+				}
+			}
+			return nil
+		}
 		if len(req.RouteOrder) < 2 || len(req.RouteOrder) > 1000 {
 			return errors.New("select 2 to 1000 route rules to reorder")
 		}
@@ -409,7 +474,11 @@ func previewExtended(ctx context.Context, a *app, s server, req previewRequest, 
 		}
 		switch req.Action {
 		case "route_rule_reorder":
-			after, err = reorderRouteRules(rules, req.RouteOrder)
+			if len(req.RouteMoves) > 0 {
+				after, err = movePanelRouteRules(rules, req.RouteMoves)
+			} else {
+				after, err = reorderRouteRules(rules, req.RouteOrder)
+			}
 			if err != nil {
 				c.Error = err.Error()
 				return

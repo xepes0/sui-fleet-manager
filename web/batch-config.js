@@ -1,4 +1,4 @@
-const bc={tab:'inbounds',mode:'edit',source:null,data:null,index:0,form:null,original:null,ops:new Map(),preview:null,version:0,tlsName:'none',publicAddrs:{},inboundCopy:false,sourceTag:'',copyOriginal:null,inboundOptions:{},clientTagsByServer:{},inboundLoading:false,inboundVersion:0,routeText:'',routeOrder:[]};
+const bc={tab:'inbounds',mode:'edit',source:null,data:null,index:0,form:null,original:null,ops:new Map(),preview:null,version:0,tlsName:'none',publicAddrs:{},inboundCopy:false,sourceTag:'',copyOriginal:null,inboundOptions:{},clientTagsByServer:{},inboundLoading:false,inboundVersion:0,routeText:'',routeOrder:[],routeMoves:[]};
 const bcKey=path=>JSON.stringify(path);
 const bcPath=path=>encodeURIComponent(JSON.stringify(path));
 const bcRead=path=>path.reduce((value,key)=>value?.[key],bc.form);
@@ -17,14 +17,13 @@ function bcObjectLabel(item,index){
   if(bc.tab==='routes')return bcRouteLabel(item,index);
   return `${item.name||item.tag||'#'+item.id} · ${item.type||''}`;
 }
-function bcMoveRoute(from,to){
+function bcMoveRoute(from,to,kind='position'){
   if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||from>=bc.routeOrder.length||to<0||to>=bc.routeOrder.length){bcError('请输入有效的规则序号');bcRender();return}
-  if(from===to)return;
-  const [rule]=bc.routeOrder.splice(from,1);bc.routeOrder.splice(to,0,rule);
+  const [rule]=bc.routeOrder.splice(from,1);bc.routeOrder.splice(to,0,rule);bc.routeMoves??=[];bc.routeMoves.push({rule:structuredClone(rule),kind,position:to});
   bcResetPreview();bcRender();
 }
 function bcRouteOrderFields(){
-  return `<section class="batch-config-section"><h4>路由执行顺序</h4><p class="hint">从上到下匹配。使用按钮或序号调整，再生成逐台预览。可取消勾选各台不共用的规则；未勾选规则保持各台原位置。</p><ol class="batch-route-order">${bc.routeOrder.map((rule,index)=>`<li><div class="batch-route-order-title"><label class="batch-config-choice"><input type="checkbox" data-bc-route-include="${index}" ${bc.routeOrderExcluded?.has(rule)?'':'checked'} aria-label="第 ${index+1} 条规则参与批量排序"><strong>${esc(bcRouteLabel(rule,index))}</strong></label><details><summary>查看规则</summary><pre>${esc(JSON.stringify(rule,null,2))}</pre></details></div><div class="batch-route-order-controls"><label>序号<input type="number" min="1" max="${bc.routeOrder.length}" value="${index+1}" data-bc-route-position="${index}" aria-label="第 ${index+1} 条规则的目标序号"></label>${[['置顶',0],['上移',index-1],['下移',index+1],['置底',bc.routeOrder.length-1]].map(([label,to])=>`<button type="button" class="secondary" data-bc-route-index="${index}" data-bc-route-move="${to}" ${to<0||to>=bc.routeOrder.length||to===index?'disabled':''} aria-label="第 ${index+1} 条规则${label}">${label}</button>`).join('')}</div></li>`).join('')}</ol></section>`;
+  return `<section class="batch-config-section"><h4>路由执行顺序</h4><p class="hint">从上到下匹配。只提交你实际移动的规则；每台分别定位并移动，其他规则保持原有相对顺序。置顶、置底和上下移动按各台自己的列表生效。</p><ol class="batch-route-order">${bc.routeOrder.map((rule,index)=>`<li><div class="batch-route-order-title"><label class="batch-config-choice"><input type="checkbox" data-bc-route-include="${index}" ${bc.routeOrderExcluded?.has(rule)?'':'checked'} aria-label="第 ${index+1} 条规则参与批量排序"><strong>${esc(bcRouteLabel(rule,index))}</strong></label><details><summary>查看规则</summary><pre>${esc(JSON.stringify(rule,null,2))}</pre></details></div><div class="batch-route-order-controls"><label>序号<input type="number" min="1" max="${bc.routeOrder.length}" value="${index+1}" data-bc-route-position="${index}" aria-label="第 ${index+1} 条规则的目标序号"></label>${[['置顶',0,'first'],['上移',index-1,'up'],['下移',index+1,'down'],['置底',bc.routeOrder.length-1,'last']].map(([label,to,kind])=>`<button type="button" class="secondary" data-bc-route-kind="${kind}" data-bc-route-index="${index}" data-bc-route-move="${to}" ${to<0||to>=bc.routeOrder.length||to===index&&['up','down'].includes(kind)?'disabled':''} aria-label="第 ${index+1} 条规则${label}">${label}</button>`).join('')}</div></li>`).join('')}</ol></section>`;
 }
 function bcRouteOrderPreview(change){
   return `<div class="batch-route-order-preview">${[['调整前',change.before],['调整后',change.after]].map(([title,rules])=>`<section><h4>${title}</h4><ol>${(rules||[]).map((rule,index)=>`<li>${esc(bcRouteLabel(rule,index))}</li>`).join('')}</ol></section>`).join('')}</div>`;
@@ -313,7 +312,7 @@ async function bcSelectionChanged(){
   bcRender();
 }
 function bcSelect(){
-  if(bc.tab==='routes'&&bc.mode==='order'){bc.routeOrder=structuredClone(bcItems());bc.routeOrderExcluded=new Set()}
+  if(bc.tab==='routes'&&bc.mode==='order'){bc.routeOrder=structuredClone(bcItems());bc.routeMoves=[];bc.routeOrderExcluded=new Set()}
   bcResetPreview();bc.ops.clear();bc.inboundVersion++;bc.clientTagsByServer={};bc.inboundOptions={};bc.inboundLoading=false;const singleton=['config','settings'].includes(bc.tab),item=singleton?bc.data?.[bc.tab]:bcItems()[bc.index];bc.original=item==null?null:structuredClone(item);bc.form=item==null?null:structuredClone(item);
   bc.tlsName=bcTLSList().find(t=>t.id===bc.form?.tls_id)?.name||'none';bc.publicAddrs={};bc.inboundCopy=false;bc.sourceTag='';bc.copyOriginal=null;bc.routeText=bc.tab==='routes'&&bc.form?JSON.stringify(bc.form,null,2):'';bcRender();
 }
@@ -392,7 +391,7 @@ function bcRender(){
   const selector=singleton||bc.mode==='order'?'':`<div class="batch-config-object-bar"><label>配置对象<select id="batch-config-object">${items.map((item,i)=>`<option value="${i}" ${i===bc.index?'selected':''}>${esc(bcObjectLabel(item,i))}</option>`).join('')}</select></label><button id="batch-config-new" class="secondary">＋ 新增${esc(name)}${bc.tab==='routes'?'规则':''}</button></div>`;
   const mode=singleton?'':`<div class="batch-config-mode"><button data-bc-mode="edit" class="${bc.mode==='edit'?'active':''}">修改字段</button><button data-bc-mode="new" class="${bc.mode==='new'?'active':''}">新增对象</button><button data-bc-mode="del" class="${bc.mode==='del'?'active':''}">删除对象</button>${bc.tab==='routes'?`<button data-bc-mode="order" class="${bc.mode==='order'?'active':''}">调整顺序</button>`:''}</div>`;
   if(!bc.form&&bc.mode!=='new'){box.innerHTML=selector+mode+'<div class="empty">此类还没有对象。点击新增开始配置。</div>';return}
-  const intro=bc.tab==='routes'?(bc.mode==='order'?'调整后的顺序将逐台匹配规则内容；服务器独有规则保留原位置。':bc.mode==='new'?'将在每台服务器的路由列表末尾追加此规则。':bc.mode==='del'?'会按完整原规则内容逐台匹配并预览删除；顺序不同也不会误删。':'会按完整原规则内容逐台匹配，再用下面的新规则替换。'):bc.mode==='new'&&bc.tab==='inbounds'?'入站负责监听和订阅公开地址；用户密码或 UUID 在“用户”里设置。':bc.mode==='new'&&bc.tab==='clients'?'先选择可用入站，再填写对应协议凭据；预览会逐台匹配入站。':bc.mode==='new'?'将用下面的表单在每台服务器新建对象。':bc.mode==='del'?'将按名称或 Tag 在每台服务器定位对象并分别预览删除。':bc.tab==='settings'?'勾选要同步的设置值；未勾选的设置保持各服务器原值。':['inbounds','outbounds','endpoints','services'].includes(bc.tab)?'勾选要批量修改的字段；修改 Tag 时会逐台检查重名和配置引用。':'勾选要批量修改的字段；未勾选的字段保持各服务器原值。';
+  const intro=bc.tab==='routes'?(bc.mode==='order'?'仅把发生移动的规则逐台调整；其他规则不参与匹配并保留相对顺序。':bc.mode==='new'?'将在每台服务器的路由列表末尾追加此规则。':bc.mode==='del'?'会按完整原规则内容逐台匹配并预览删除；顺序不同也不会误删。':'会按完整原规则内容逐台匹配，再用下面的新规则替换。'):bc.mode==='new'&&bc.tab==='inbounds'?'入站负责监听和订阅公开地址；用户密码或 UUID 在“用户”里设置。':bc.mode==='new'&&bc.tab==='clients'?'先选择可用入站，再填写对应协议凭据；预览会逐台匹配入站。':bc.mode==='new'?'将用下面的表单在每台服务器新建对象。':bc.mode==='del'?'将按名称或 Tag 在每台服务器定位对象并分别预览删除。':bc.tab==='settings'?'勾选要同步的设置值；未勾选的设置保持各服务器原值。':['inbounds','outbounds','endpoints','services'].includes(bc.tab)?'勾选要批量修改的字段；修改 Tag 时会逐台检查重名和配置引用。':'勾选要批量修改的字段；未勾选的字段保持各服务器原值。';
   const shortcut=bc.mode==='new'&&bc.tab==='inbounds'?'<button id="batch-config-client-shortcut" class="secondary" type="button">下一步：创建用户与凭据</button>':'';
   const fields=bc.tab==='routes'&&bc.mode==='order'?bcRouteOrderFields():bc.mode==='del'?`<div class="batch-config-danger">将删除 ${bc.tab==='routes'?esc(bcRouteLabel(bc.original,bc.index)):esc(bc.original?.name||bc.original?.tag||'对象')}。预览会逐台检查。</div>`:bc.tab==='routes'?bcRouteFields():bc.mode==='new'&&bc.tab==='clients'?bcClientNewFields():bc.mode==='new'&&bc.tab==='inbounds'?bcInboundNewFields():bc.mode==='edit'&&['clients','inbounds'].includes(bc.tab)?bcGuidedEditFields():bcFields(bc.form,[],0);
   const countText=bc.tab==='routes'?(bc.mode==='order'?'调整路由顺序':bc.mode==='new'?'新增路由规则':bc.mode==='del'?'删除路由规则':'替换整条路由规则'):(bc.mode==='new'?'新建对象':bc.ops.size+' 项字段变更');
@@ -431,7 +430,7 @@ function bcMark(path,op='set'){
 function bcRequest(){
   const ids=bcSelected();if(!ids.length)throw Error('请先选择服务器');
   if(bc.tab==='routes'){
-    if(bc.mode==='order')return {server_ids:ids,action:'route_rule_reorder',route_order:structuredClone(bc.routeOrder.filter(rule=>!bc.routeOrderExcluded?.has(rule)))};
+    if(bc.mode==='order'){const excluded=[...(bc.routeOrderExcluded||[])].map(rule=>JSON.stringify(rule)),moves=(bc.routeMoves||[]).filter(move=>!excluded.includes(JSON.stringify(move.rule)));if(!moves.length)throw Error('请先移动至少一条已勾选的路由规则');return {server_ids:ids,action:'route_rule_reorder',route_moves:structuredClone(moves)}};
     if(bc.mode==='new')return {server_ids:ids,action:'route_rule_add',route_rule:bcRouteCurrentRule(),route_position:'last'};
     if(!bc.original)throw Error('请选择路由规则');
     if(bc.mode==='del')return {server_ids:ids,action:'route_rule_delete',route_match:structuredClone(bc.original)};
@@ -489,7 +488,7 @@ document.addEventListener('click',event=>{
   if(event.target.closest('#batch-config-reload')){bcLoad();return}
   if(event.target.closest('#batch-config-new')){bcNew();return}
   if(event.target.closest('#batch-config-client-shortcut')){bc.tab='clients';bcNew();return}
-  const move=event.target.closest('[data-bc-route-move]');if(move){bcMoveRoute(Number(move.dataset.bcRouteIndex),Number(move.dataset.bcRouteMove));return}
+  const move=event.target.closest('[data-bc-route-move]');if(move){bcMoveRoute(Number(move.dataset.bcRouteIndex),Number(move.dataset.bcRouteMove),move.dataset.bcRouteKind);return}
   const mode=event.target.closest('[data-bc-mode]');if(mode){if(mode.dataset.bcMode==='new')bcNew();else{bc.mode=mode.dataset.bcMode;bcSelect();}return}
   if(event.target.closest('#bc-route-json-apply')){try{bc.form=bcRouteRuleFromText();bcRouteSyncText();bcResetPreview();bcRender()}catch(e){bcError(e.message)}return}
   if(event.target.closest('#batch-config-review')){bcPreview();return}

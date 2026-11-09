@@ -19,10 +19,14 @@ test('route order controls move complete rules and submit an order preview', () 
   vm.runInContext(batchSource.slice(batchSource.indexOf('function bcRequest()'),batchSource.indexOf('async function bcPreview()')),context);
   const request=context.bcRequest();
   assert.equal(request.action,'route_rule_reorder');
-  context.bc.routeOrderExcluded=new Set([context.bc.routeOrder[1]]);
-  assert.equal(context.bcRequest().route_order.length,2);
+  context.bc.routeOrderExcluded=new Set([context.bc.routeOrder[0]]);
+  assert.throws(()=>context.bcRequest(),/至少一条/);
   context.bc.routeOrderExcluded.clear();
-  assert.deepEqual(JSON.parse(JSON.stringify(request.route_order)),context.bc.routeOrder);
+  assert.equal(request.route_moves.length,2);
+  assert.ok(request.route_moves.every(move=>move.rule.action==='sniff'));
+  assert.equal(request.route_order,undefined);
+  context.bcMoveRoute(0,0,'first');
+  assert.equal(context.bcRequest().route_moves[2].kind,'first');
   const preview=context.bcRouteOrderPreview({before:context.bc.routeOrder,after:[...context.bc.routeOrder].reverse()});
   assert.ok(preview.includes('调整前')&&preview.includes('调整后'));
 });
